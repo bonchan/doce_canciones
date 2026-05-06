@@ -1,0 +1,3 @@
+Una antena instalada en el techo de la sala capta señales de muy baja frecuencia (VLF), emisiones naturales del planeta y fragmentos de transmisiones atmosféricas, como ruidos de tormentas, actividad solar y señales de satélites meteorológicos. Estas señales, que habitualmente quedan fuera del rango perceptible humano, son visualizadas mediante dos televisores Smart verticales, y extraídas de páginas web, como un diario del cielo.
+
+El sistema muestra también imágenes satelitales DIY decodificadas en tiempo real (NOAA), en un collage con textos generados a partir de las condiciones atmosféricas del momento.

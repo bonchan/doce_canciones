@@ -1,0 +1,3 @@
+Un TV exhibe la imagen de una cámara subjetiva que recorre un entorno virtual en 3D: un planeta imaginario generado digitalmente. La dirección y velocidad de este desplazamiento están determinadas en tiempo real por los datos del viento local, captados mediante un anemómetro de fabricación casera (DIY) instalado en el techo de la sala de exposición.
+
+Durante el recorrido, la cámara atraviesa distintos paisajes y escenas que remiten al entorno natural y geográfico del Alto Valle. En su trayectoria se pueden ver el puente que une Neuquén con Cipolletti, así como también fauna y flora características de la región: zorros, garzas, choiques, insectos a gran

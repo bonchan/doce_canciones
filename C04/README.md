@@ -1,0 +1,1 @@
+Escultura cinética mecánica. Está compuesta por dos servomotores que sostienen una varilla cada uno, las que a su vez sostienen una tela. Los servomotores se activan según la cantidad de personas detectadas en una cámara de vigilancia de acceso público de la ciudad de Neuquén.

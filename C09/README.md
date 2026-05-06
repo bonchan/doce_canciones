@@ -1,0 +1,3 @@
+Una instalación de video especulativa basada en material genético recolectado de plantas del entorno (hojas, raíces, semillas) o incluso del propio suelo de la ciudad (o archivo de retratos)
+
+A partir  de análisis básicos o simulaciones de secuenciación, se construye un archivo visual y textual que imagina las mutaciones posibles de ese material en futuros ecosistemas alterados por la tecnología. Un televisor muestra retratos construidos con fragmentos de nosotrxs, mezclados con ramas, piedras y animales.

@@ -1,0 +1,2 @@
+Instalación sonora. 
+Una Estación de sensado enterrada en el patio de la Saraco transforma en tiempo real los datos obtenidos (humedad y temperatura del suelo) en frecuencias y texturas sonoras respectivamente, que se oyen a través de dos parlantes monocanales. 

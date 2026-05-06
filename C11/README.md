@@ -1,0 +1,3 @@
+A través de sensores conectados a hojas, tallos, hongos y raíces (como electrodos resistivos o capacitivos, sensores de respuesta galvánica o biofeedback), se registran microvariaciones eléctricas generadas por los procesos vitales de las plantas.
+
+Estas señales se traducen en tiempo real a sonidos sutiles, envolventes o pulsantes, generando una atmósfera sonora que cambia según el estado de las plantas, la hora del día o las condiciones ambientales.

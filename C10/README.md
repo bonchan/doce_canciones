@@ -1,0 +1,3 @@
+Se trata de una instalación de datos meteorológicos recolectados colectivamente por redes ciudadanas (como una antena DIY, estaciones meteorológicas barriales o aportes de otros colectivos del sur global). 
+
+La información se visualiza en tiempo real en la sala mediante mapas, gráficos, y fragmentos de textos meteorológicos generados por inteligencia artificial entrenada con diarios íntimos y reportes del tiempo

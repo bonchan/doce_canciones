@@ -1,0 +1,2 @@
+Micrófonos de contacto o geófono ubicados bajo las vías captan las vibraciones que produce el tren cuando pasa: crujidos, dilataciones, resonancias, sonidos estructurales imperceptibles al oído humano.
+Estas señales se amplifican y procesan en tiempo real, generando una atmósfera sonora envolvente que se expresa en un TV analógico.

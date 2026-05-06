@@ -1,0 +1,1 @@
+Instalación neumática. La pieza transforma una superficie flexible (bolsa de nylon liviana) en una gran "pieza que respira". El sistema se infla y desinfla suavemente, imitando el ritmo de una respiración que se sincroniza con los niveles de CO2 ambiental.
