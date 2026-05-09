@@ -34,7 +34,10 @@ class PolargraphGUI:
         self.port_combo = ttk.Combobox(control_frame)
         self.port_combo['values'] = [p.device for p in serial.tools.list_ports.comports()]
         self.port_combo.pack()
-        ttk.Button(control_frame, text="Connect", command=self.connect_serial).pack(pady=5)
+
+        self.btn_text = tk.StringVar()
+        self.btn_text.set("Connect")
+        ttk.Button(control_frame, textvariable=self.btn_text, command=self.toggle_serial).pack(pady=5)
 
         # Movement Buttons
         ttk.Separator(control_frame).pack(fill=tk.X, pady=10)
@@ -48,6 +51,7 @@ class PolargraphGUI:
 
         ttk.Button(control_frame, text="ZERO", command=lambda: self.send_cmd("ZERO")).pack(fill=tk.X, pady=2)
         ttk.Button(control_frame, text="HOME", command=lambda: self.send_cmd("HOME")).pack(fill=tk.X, pady=2)
+        ttk.Button(control_frame, text="HALT", command=lambda: self.send_cmd("HALT")).pack(fill=tk.X, pady=2)
 
         # Image Logic
         ttk.Separator(control_frame).pack(fill=tk.X, pady=10)
@@ -153,7 +157,7 @@ class PolargraphGUI:
             
             self.canvas.create_line(x1, y1, x2, y2, fill="red", tags="sim")
             last_p = p
-            self.root.update() # Animate the simulation
+            self.root.update()
             time.sleep(0.001)
 
     def draw_loop(self):
@@ -161,8 +165,6 @@ class PolargraphGUI:
             for p in self.points_to_draw:
                 if self.stop_requested: return
                 self.send_cmd(f"ABS X{p[0]:.2f} Y{p[1]:.2f}")
-                # Wait for 'ok' from Bluepill before sending next point
-                # This prevents weird buffer movements
                 self.wait_for_ok() 
             
             if not self.continuous_var.get(): break
@@ -174,7 +176,7 @@ class PolargraphGUI:
             while (time.time() - start_time) < 2.0: # 2s timeout
                 if self.ser.in_waiting:
                     line = self.ser.readline().decode().strip()
-                    if "arrived" in line.lower(): return
+                    if "arrived" in line.lower() or "disabled" in line.lower(): return
                 time.sleep(0.01)
 
     def start_draw_thread(self):
@@ -186,11 +188,27 @@ class PolargraphGUI:
     def stop_drawing(self):
         self.stop_requested = True
 
+    def toggle_serial(self):
+        if self.ser and self.ser.is_open:
+            try:
+                self.ser.close()
+                self.btn_text.set("Connect")
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not close: {e}")
+        else:
+            self.connect_serial()
+
     def connect_serial(self):
         try:
-            self.ser = serial.Serial(self.port_combo.get(), 115200, timeout=0.1)
-            messagebox.showinfo("Success", "Connected")
-        except Exception as e: messagebox.showerror("Error", str(e))
+            port = self.port_combo.get()
+            if not port:
+                messagebox.showwarning("Warning", "Select a port first!")
+                return
+                
+            self.ser = serial.Serial(port, 115200, timeout=0.1)
+            self.btn_text.set("Disconnect")
+        except Exception as e:
+            messagebox.showerror("Error", f"Connection failed: {e}")
 
     def send_cmd(self, cmd):
         if self.ser and self.ser.is_open:

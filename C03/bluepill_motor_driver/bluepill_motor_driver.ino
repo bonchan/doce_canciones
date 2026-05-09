@@ -20,11 +20,16 @@ float curX = 0, curY = 0;
 float targetX = 0, targetY = 0;
 float stepsPerMm = 65.189;
 
+float maxSpeedWind = 1500;
 float maxSpeed = 800;  // 28BYJ-48 is slow, 1000 might skip steps
 float accel = 400;
 
 bool isMoving = false;
 float segmentDist = 2.0;  // Smaller segments for smoother arcs
+
+bool isWinding = false;
+int windL = 0;
+int windR = 0;
 
 // static int printCounter = 0;
 
@@ -53,6 +58,10 @@ void loop() {
     if (left.distanceToGo() == 0 && right.distanceToGo() == 0) {
       updatePath();
     }
+  } else if (isWinding) {
+    // Continuous manual rotation
+    left.runSpeed();
+    right.runSpeed();
   }
 
   if (Serial.available()) parseCommand(Serial.readStringUntil('\n'));
@@ -74,10 +83,48 @@ void parseCommand(String line) {
     Serial.println("Origin Set");
   }
 
+  if (line.startsWith("HALT")) {
+    isMoving = false;
+    isWinding = false;
+    left.disableOutputs();
+    right.disableOutputs();
+    Serial.println("Motors Disabled");
+    return;
+  }
+
+  if (line.startsWith("WIND")) {
+    isMoving = false; // Cancel coordinate movement
+    isWinding = true;
+    left.enableOutputs();
+    right.enableOutputs();
+
+    // Check for Left Motor
+    if (line.indexOf("-L") != -1) windL = 1;
+    else if (line.indexOf("L") != -1) windL = -1;
+    else windL = 0;
+
+    // Check for Right Motor
+    if (line.indexOf("-R") != -1) windR = 1;
+    else if (line.indexOf("R") != -1) windR = -1;
+    else windR = 0;
+
+    // Set constant speed (direction * maxSpeed)
+    // Note: We use invL/invR to respect your wiring orientation
+    left.setSpeed(windL * maxSpeedWind * invL);
+    right.setSpeed(windR * maxSpeedWind * invR);
+
+    Serial.print("Winding L:"); Serial.print(windL);
+    Serial.print(" R:"); Serial.println(windR);
+  }
+
   if (line.startsWith("HOME")) {
     targetX = 0;
     targetY = 0;
+
+    left.enableOutputs();
+    right.enableOutputs();
     isMoving = true;
+
     Serial.println("Going Home");
   }
 
@@ -103,6 +150,8 @@ void parseCommand(String line) {
       Serial.print(" Y: ");
       Serial.println(targetY);
 
+      left.enableOutputs();
+      right.enableOutputs();
       isMoving = true;
     }
   }
