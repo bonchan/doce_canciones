@@ -1,0 +1,13 @@
+# python
+.env
+__pycache__
+
+# arduino
+config.h
+
+# touch
+mqtt.toe
+
+# misc
+MISC
+
