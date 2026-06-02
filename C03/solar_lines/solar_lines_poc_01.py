@@ -4,7 +4,9 @@ from pvlib import solarposition
 import matplotlib.pyplot as plt
 
 # 1. Location & Settings
-lat, lon = -38.9516, -68.0591
+lat, lon = -38.9516, -68.0591 # neuquen
+# lat, lon = 0,-78.8 # ecu
+
 tz = 'America/Argentina/Salta'
 months = range(1, 13)
 colors = plt.cm.magma(np.linspace(0.3, 0.9, 12)) # Warm "sun" palette
