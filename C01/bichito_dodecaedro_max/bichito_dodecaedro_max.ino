@@ -6,7 +6,6 @@
 
 #define LDR_PIN_1 2
 #define LDR_PIN_2 4
-#define DATA_PIN 10
 #define I2S_BCLK 0
 #define I2S_LRC 1
 #define I2S_DOUT 3
@@ -83,6 +82,10 @@ void setup() {
 void loop() {
   tickNetwork();
 
+  if (!wifiConnected || !mqttConnected) {
+    digitalWrite(LED_PIN, (millis() / 500) % 2);
+  }
+
   int lightValue1 = analogRead(LDR_PIN_1);  // pitch
   int lightValue2 = analogRead(LDR_PIN_2);  // chop rate
 
@@ -136,7 +139,6 @@ void loop() {
     digitalWrite(ledPins[i], i < ledsOn ? HIGH : LOW);
   }
 
-  yield();
   publishState(4095 - lightValue1, brightness, currentHz2);
   delay(1);
 }

@@ -35,10 +35,18 @@ def stream_video():
 
         # CRUCIAL FOR J2 CORE: Downscale the resolution on your PC first!
         # Blasting raw 1080p or 4K JPEGs will instantly crash the J2 Core's tiny memory heap.
-        frame = cv2.resize(frame, (480, 360)) 
+        # frame = cv2.resize(frame, (480, 360)) 
+        qua = 70
+        fps = 0.033
+
+        # viewsonic
+        frame = cv2.resize(frame, (320, 240))
+        qua = 40
+        fps = 0.066
+
 
         # Compress to JPEG
-        success, encoded_image = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        success, encoded_image = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), qua])
         if not success:
             continue
 
@@ -53,8 +61,8 @@ def stream_video():
             # Send payload
             client_socket.sendall(data_bytes)
             
-            # Match frame timing (~30fps)
-            time.sleep(0.033)
+            # Match frame timing
+            time.sleep(fps)
             
         except Exception as e:
             print(f"Transmission broken: {e}")

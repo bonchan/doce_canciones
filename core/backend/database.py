@@ -2,12 +2,10 @@ import os
 from tinydb import TinyDB, Query
 from dotenv import load_dotenv
 
-# Load env variables
 load_dotenv()
 
-CLEAR_DB_ON_STARTUP = os.getenv("CLEAR_DB_ON_STARTUP", False)
+CLEAR_DB_ON_STARTUP = os.getenv("CLEAR_DB_ON_STARTUP", "False") == "True"
 
-# Ensure the data directory exists locally
 os.makedirs("data", exist_ok=True)
 db = TinyDB("data/db.json")
 devices_table = db.table("devices")
@@ -15,23 +13,25 @@ Device = Query()
 
 if CLEAR_DB_ON_STARTUP:
     devices_table.truncate()
-    print("🧹 Clear DB Flag active: TinyDB table has been truncated.")
+    print("DB cleared on startup.")
 
-def get_or_create_device(chip_id):
+def get_or_create_device(chip_id, fw_version, script_name):
     device = devices_table.get(Device.id == chip_id)
     if not device:
         device = {
             "id": chip_id,
-            "name": None, 
+            "fw": fw_version,
+            "sn": script_name,
+            "name": None,
             "configured": False,
-            "position": {"x": 0.5, "y": 0.5, "z": 0.0},
-            "last_seen_telemetry": None
+            "position": {"x": 0.5, "y": 0.5, "z": 0.0}
         }
         devices_table.insert(device)
+    else:
+        devices_table.update({"fw": fw_version, "sn": script_name}, Device.id == chip_id)
+        device["fw"] = fw_version
+        device["sn"] = script_name
     return device
-
-def update_device_telemetry(chip_id, telemetry_data):
-    devices_table.update({"last_seen_telemetry": telemetry_data}, Device.id == chip_id)
 
 def update_device_config(chip_id, name, x, y, z):
     devices_table.update({
@@ -42,3 +42,17 @@ def update_device_config(chip_id, name, x, y, z):
 
 def get_all_devices():
     return devices_table.all()
+
+def get_config_payload():
+    """Returns list of configured devices for DIS."""
+    devices = devices_table.all()
+    return [
+        {
+            "id": d["id"],
+            "fw": d["fw"],
+            "name": d.get("name") or d["id"],
+            "x": d["position"]["x"],
+            "y": d["position"]["y"],
+        }
+        for d in devices
+    ]

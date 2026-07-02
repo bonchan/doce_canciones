@@ -54,7 +54,9 @@ const int turn[12] = { 1000, 100, 10, 1, 2, 3, 4, 40, 400, 4000, 5000, 6000 };
 
 
 void setup() {
+  Serial.begin(115200);
   setupNetwork();
+
   for (int i = 0; i < 7; i++) {
     pinMode(segPins[i], OUTPUT);
     digitalWrite(segPins[i], LOW);
@@ -86,6 +88,8 @@ void setup() {
 
 void loop() {
   tickNetwork();
+  tickCommands();
+  
   unsigned long now = millis();
   if (now - lastUpdate > updateInterval) {
     lastUpdate = now;
@@ -148,7 +152,12 @@ void loop() {
     Serial.println(disp);
   }
 
-  publishState(combined, ledBright, freq);
+  JsonDocument doc;
+  doc["ldr1"] = ldr1;
+  doc["ldr2"] = ldr2;  //analogRead(A1);
+  doc["freq"] = freq;  // your value
+
+  publishTelemetry(doc);
 
   delay(1);
 }

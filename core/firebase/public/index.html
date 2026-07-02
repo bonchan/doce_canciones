@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Device Network Telemetry Matrix</title>
+
+  <script defer src="/__/firebase/12.14.0/firebase-app-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-auth-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-database-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-firestore-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-functions-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-messaging-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-storage-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-analytics-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-remote-config-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-performance-compat.js"></script>
+
+  <script defer src="/__/firebase/init.js?useEmulator=false"></script>
+
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Telemetry Dashboard</h1>
+      </div>
+      <div class="sync-time" style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+        <div>Last Sync: <span id="sync-timestamp">Connecting...</span></div>
+        <div style="font-size: 12px; color: #38bdf8; font-family: monospace;" id="sync-counter"></div>
+      </div>
+    </header>
+
+    <main class="device-grid" id="devices-container">
+      <div class="empty-state">Waiting for data payload from Firebase...</div>
+    </main>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const syncTimeEl = document.getElementById("sync-timestamp");
+      const containerEl = document.getElementById("devices-container");
+
+      // ── SELECT THE NEW COUNTER DOM NODE ──
+      const syncCounterEl = document.getElementById("sync-counter");
+
+      // Track the last sync timestamp globally inside the event loop closure
+      let lastSyncDate = null;
+      let intervalSeconds = null;
+
+      try {
+        const database = firebase.database();
+        const snapshotRef = database.ref('device_snapshot');
+
+        snapshotRef.on('value', (snapshot) => {
+          const payload = snapshot.val();
+
+          if (!payload) {
+            containerEl.innerHTML = `<div class="empty-state">No device snapshots found in database tree.</div>`;
+            syncTimeEl.innerText = "Never";
+            syncCounterEl.innerText = "";
+            return;
+          }
+
+          if (payload.last_sync) {
+            let utcString = payload.last_sync;
+            if (!utcString.endsWith('Z')) {
+              utcString += 'Z';
+            }
+            lastSyncDate = new Date(utcString);
+            syncTimeEl.innerText = lastSyncDate.toLocaleTimeString();
+            syncCounterEl.innerText = `Refresh in ${intervalSeconds} seconds`;
+          }
+
+          if (payload.interval_seconds) {
+            intervalSeconds = payload.interval_seconds
+          }
+
+          containerEl.innerHTML = "";
+
+          const devices = payload.devices || {};
+          const deviceIds = Object.keys(devices);
+
+          if (deviceIds.length === 0) {
+            containerEl.innerHTML = `<div class="empty-state">No devices currently reporting sync nodes.</div>`;
+            return;
+          }
+
+          deviceIds.forEach(chipId => {
+            const deviceData = devices[chipId];
+            const isOnline = deviceData.online !== undefined ? deviceData.online : true;
+            const statusClass = isOnline ? 'status-online' : 'status-offline';
+            const statusText = isOnline ? 'Online' : 'Offline';
+
+            const card = document.createElement("div");
+            card.className = "device-card";
+
+            let telemetryHtml = "";
+
+            Object.keys(deviceData).forEach(key => {
+              if (key === 'online') return;
+
+              const val = typeof deviceData[key] === 'object'
+                ? JSON.stringify(deviceData[key])
+                : deviceData[key];
+
+              telemetryHtml += `
+                <div class="telemetry-row">
+                    <span class="telemetry-label">${key}:</span>
+                    <span class="telemetry-value">${val}</span>
+                </div>
+              `;
+            });
+
+            card.innerHTML = `
+              <div class="device-header">
+                  <span class="chip-id">ID: ${chipId}</span>
+                  <span class="status-badge ${statusClass}">${statusText}</span>
+              </div>
+              <div class="device-body">
+                  ${telemetryHtml}
+              </div>
+            `;
+
+            containerEl.appendChild(card);
+          });
+        }, (error) => {
+          console.error("Firebase database read error execution trap:", error);
+          syncTimeEl.innerText = "Read Error";
+        });
+
+        // ── LIVE TICKING COUNTER ENGINE ──────────────────────────────────────
+        // Fires every 1000 milliseconds to calculate delta time on the interface
+        setInterval(() => {
+          if (!lastSyncDate) return;
+
+          const now = new Date();
+          // Divide by 1000 to drop millisecond precision down to raw integers
+          const secondsElapsed = Math.floor((now - lastSyncDate) / 1000);
+
+          // Safety catch if system clocks run slightly desynced
+          const cleanSeconds = Math.max(0, secondsElapsed);
+
+          const displayNumber = intervalSeconds - cleanSeconds
+
+          syncCounterEl.innerText = displayNumber > -1 ? `Refresh in ${displayNumber} seconds` : `Offline for ${-displayNumber} seconds`;
+        }, 1000);
+
+      } catch (e) {
+        console.error("Initialization Error:", e);
+        syncTimeEl.innerText = "SDK Error";
+      }
+    });
+  </script>
+</body>
+
+</html>

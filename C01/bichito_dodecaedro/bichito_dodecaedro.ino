@@ -1,4 +1,5 @@
 #include <FastLED.h>
+constexpr const char* SCRIPT_NAME = "bichito_dodecaedro";
 #include "../../core/arduino/node_wifi.h"
 
 #define NUM_LEDS 5
@@ -25,6 +26,8 @@ void setup() {
 
 void loop() {
   tickNetwork();
+  tickCommands();
+  
   int lightValue = analogRead(LDR_PIN);
 
   if (lightValue < LIGHT_THRESHOLD) {
@@ -53,9 +56,12 @@ void loop() {
   FastLED.setBrightness(brightness);
   FastLED.show();
 
-  yield();
+  JsonDocument doc;
+  doc["ldr1"] = 4095 - lightValue;
+  doc["ldr2"] = 0;
+  doc["freq"] = freq;
 
-  publishState(4095 - lightValue, brightness, freq);
+  publishTelemetry(doc);
 
-  delay(1);  // delay in between reads for stability
+  delay(1);
 }

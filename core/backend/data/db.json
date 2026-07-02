@@ -1,1 +1,100 @@
-{"devices": {"1": {"id": "48ABC3D4DB1C", "name": "dode", "configured": true, "position": {"x": 0.3450000000000002, "y": 0.55, "z": 0}, "last_seen_telemetry": null}, "2": {"id": "F4106AA84320", "name": "rover", "configured": true, "position": {"x": 0.6425, "y": 0.535, "z": 0}, "last_seen_telemetry": null}, "3": {"id": "78ABC3D4DB1C", "name": "module", "configured": true, "position": {"x": 0.77125, "y": 0.855, "z": 0}, "last_seen_telemetry": null}}}
+{
+  "devices": {
+    "1": {
+      "id": "48ABC3D4DB1C",
+      "fw": "0.0.4",
+      "sn": "bichito_dodecaedro",
+      "name": "dodecaedro",
+      "configured": true,
+      "position": {
+        "x": 0.74875,
+        "y": 0.44166666666666665,
+        "z": 0
+      }
+    },
+    "2": {
+      "id": "3CD9B03B0010",
+      "fw": "0.0.4",
+      "sn": "esp32C3_module",
+      "name": "left",
+      "configured": true,
+      "position": {
+        "x": 0.1225,
+        "y": 0.625,
+        "z": 0
+      }
+    },
+    "3": {
+      "id": "2CABC3D4DB1C",
+      "fw": "0.0.2",
+      "sn": "esp32C3_module",
+      "name": "2CABC3D4DB1C",
+      "configured": true,
+      "position": {
+        "x": 0.51125,
+        "y": 0.25333333333333335,
+        "z": 0
+      }
+    },
+    "4": {
+      "id": "F8E0AE3B0010",
+      "fw": "0.0.2",
+      "sn": "esp32C3_module",
+      "name": "F8E0AE3B0010",
+      "configured": true,
+      "position": {
+        "x": 0.66625,
+        "y": 0.7533333333333333,
+        "z": 0
+      }
+    },
+    "5": {
+      "id": "D4F7B03B0010",
+      "fw": "0.0.2",
+      "sn": "esp32C3_module",
+      "name": "D4F7B03B0010",
+      "configured": true,
+      "position": {
+        "x": 0.53,
+        "y": 0.8116666666666666,
+        "z": 0
+      }
+    },
+    "6": {
+      "id": "C4E8AE3B0010",
+      "fw": "0.0.2",
+      "sn": "esp32C3_module",
+      "name": "C4E8AE3B0010",
+      "configured": true,
+      "position": {
+        "x": 0.8375,
+        "y": 0.7183333333333334,
+        "z": 0
+      }
+    },
+    "7": {
+      "id": "78ABC3D4DB1C",
+      "fw": "0.0.2",
+      "sn": "esp32C3_module",
+      "name": "78ABC3D4DB1C",
+      "configured": true,
+      "position": {
+        "x": 0.26625,
+        "y": 0.30833333333333335,
+        "z": 0
+      }
+    },
+    "8": {
+      "id": "0407D5D4DB1C",
+      "fw": "0.0.4",
+      "sn": "esp32C3_module",
+      "name": "right",
+      "configured": true,
+      "position": {
+        "x": 0.3,
+        "y": 0.7333333333333333,
+        "z": 0
+      }
+    }
+  }
+}

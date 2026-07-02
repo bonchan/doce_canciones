@@ -1,13 +1,16 @@
 # python
 .env
+core/backend/firebase/
 __pycache__
 
 # arduino
 config.h
+C01/*/build
 
 # touch
 mqtt.toe
 
 # misc
 MISC
+android
 

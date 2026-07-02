@@ -1,91 +1,117 @@
+import os
 import asyncio
+import time
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 import database
 import broker_listener
-import json
+import threading
+import adb_watchdog
+from firebase_pusher import FirebaseDatabasePusher
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# TODO validate that this is still working
+FIREBASE_CRED_PATH = os.getenv("FIREBASE_CRED_PATH")
+FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL")
+
+firebase_pusher = FirebaseDatabasePusher(
+    cred_path=FIREBASE_CRED_PATH,
+    database_url=FIREBASE_DATABASE_URL,
+    interval_seconds=60
+)
+
 
 active_connections = []
 
 async def broadcast_to_websocket(chip_id, telemetry):
-    """Callback triggered from the MQTT thread. Runs inside the async main loop."""
+    # Build merged state same as publish_sys_state
+    now = time.time()
+    output = {}
+    for cid, data in broker_listener.LIVE_STATE_CACHE.items():
+        entry = dict(data)
+        last_ts = entry.pop("_ts", 0)
+        entry["online"] = (now - last_ts) < broker_listener.SAT_TTL
+        output[cid] = entry
+
     payload = {
-        "type": "TELEMETRY_UPDATE",
-        "chip_id": chip_id,
-        "data": telemetry,
-        "device_meta": database.get_or_create_device(chip_id)
+        "type": "STATE_UPDATE",
+        "data": output,
     }
-    
-    # Send instantly to every connected browser
-    for connection in active_connections:
+    for ws in list(active_connections):
         try:
-            await connection.send_json(payload)
+            await ws.send_json(payload)
         except Exception:
-            # Catch disconnected ghost sessions gracefully
             pass
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Capture the core server event loop and share it with the broker listener
-    main_loop = asyncio.get_running_loop()
-    broker_listener.start_mqtt_listener(broadcast_to_websocket, main_loop)
+    loop = asyncio.get_running_loop()
+    broker_listener.start_mqtt_listener(broadcast_to_websocket, loop)
+    time.sleep(10)
+    await firebase_pusher.start()
     yield
+    await firebase_pusher.stop()
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ── REST endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/api/devices")
 def read_devices():
-    db_devices = database.get_all_devices()
-    # Inject current real-time RAM metrics when page initially updates
-    for device in db_devices:
-        chip_id = device["id"]
-        device["last_seen_telemetry"] = broker_listener.LIVE_STATE_CACHE.get(chip_id, None)
-    return db_devices
+    devices = database.get_all_devices()
+    for d in devices:
+        d["telemetry"] = broker_listener.LIVE_STATE_CACHE.get(d["id"])
+    return devices
 
 @app.post("/api/devices/{chip_id}/config")
 def save_device_config(chip_id: str, payload: dict):
-    c = {
-        "x": payload["position"]["x"], 
-        "y": payload["position"]["y"], 
-        "z": payload["position"]["z"]
-    }
-    database.update_device_config(
-        chip_id, 
-        payload.get("name"), 
-        payload["position"]["x"], 
-        payload["position"]["y"], 
-        payload["position"]["z"]
-    )
-    target_topic = f"esp32/chipid/{chip_id}/config"
-    broker_listener.publish_command(target_topic, json.dumps(c))
+    pos = payload["position"]
+    database.update_device_config(chip_id, payload.get("name"), pos["x"], pos["y"], pos["z"])
+    broker_listener.publish_sys_config()
+    return {"status": "ok"}
 
-    return {"status": "success"}
+@app.post("/api/devices/{chip_id}/command")
+def send_command(chip_id: str, payload: dict):
+    cmd    = payload.get("cmd")
+    params = payload.get("params", {})
+    broker_listener.publish_command(chip_id, cmd, params)
+    return {"status": "ok", "cmd": cmd}
 
-@app.post("/api/devices/{chip_id}/identify")
-def identify_device(chip_id: str, payload: dict):
-    state = payload.get("state", "off")
-    target_topic = f"esp32/chipid/{chip_id}/builtin_led"
-    
-    # Run the transmission using our existing connection loop instance
-    broker_listener.publish_command(target_topic, state)
-    
-    return {"status": "success", "topic": target_topic, "sent": state}
+@app.post("/api/devices/all/command")
+def send_command_all(payload: dict):
+    cmd    = payload.get("cmd")
+    params = payload.get("params", {})
+    broker_listener.publish_command_all(cmd, params)
+    return {"status": "ok", "cmd": cmd}
+
+@app.post("/api/events")
+def send_event(payload: dict):
+    broker_listener.publish_event(payload)
+    return {"status": "ok"}
+
+# ── WebSocket ─────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws/telemetry")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_connections.append(websocket)
+    # Send current config immediately on connect
+    await websocket.send_json({
+        "type": "CONFIG",
+        "data": database.get_config_payload()
+    })
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         active_connections.remove(websocket)
+
+if __name__ == "__main__":
+    # threading.Thread(target=adb_watchdog.watchdog, daemon=True).start()
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
