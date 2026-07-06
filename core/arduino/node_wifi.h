@@ -8,7 +8,7 @@
 #include <ArduinoJson.h>
 #include "config.h"
 
-constexpr const char* FW_VERSION = "0.0.4";
+constexpr const char* FW_VERSION = "0.0.5";
 
 
 // ── timing ────────────────────────────────────────────────────────────────────
@@ -41,7 +41,6 @@ char chipIDStr[20];
 char topicTelemetry[64];
 char topicStartup[64];
 char topicCommand[64];
-char topicCommandAll[64];
 
 bool wifiConnected = false;
 bool mqttConnected = false;
@@ -122,7 +121,10 @@ void onCommand(const char* cmd, JsonObject params) {
 // ── MQTT callback ─────────────────────────────────────────────────────────────
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     // only handle command topics
-    if (strcmp(topic, topicCommand) != 0 && strcmp(topic, topicCommandAll) != 0) return;
+    bool isMyCommand = (strcmp(topic, topicCommand) == 0);
+    bool isBroadcast = (strcmp(topic, "system/command/all") == 0);
+
+    if (!isMyCommand && !isBroadcast) return;
 
     // parse JSON
     JsonDocument doc;
@@ -170,8 +172,7 @@ bool tryConnectMQTT() {
     Serial.print("MQTT connecting...");
     if (mqttClient.connect(chipIDStr, MQTT_USER, MQTT_PASS)) {
         Serial.println(" ok");
-        mqttClient.subscribe(topicCommand);
-        mqttClient.subscribe(topicCommandAll);
+        mqttClient.subscribe("system/command/#");
         publishStartup();
         return true;
     }
@@ -183,14 +184,14 @@ bool tryConnectMQTT() {
 
 // ── setup ─────────────────────────────────────────────────────────────────────
 void setupNetwork() {
-    uint64_t chipid = ESP.getEfuseMac();
-    snprintf(chipIDStr,      sizeof(chipIDStr),      "%04X%08X",
-             (uint16_t)(chipid >> 32), (uint32_t)chipid);
+    Serial.begin(115200);
 
-    snprintf(topicTelemetry, sizeof(topicTelemetry), "esp32/chipid/%s/telemetry", chipIDStr);
-    snprintf(topicStartup, sizeof(topicStartup), "esp32/chipid/%s/startup", chipIDStr);
-    snprintf(topicCommand,   sizeof(topicCommand),   "esp32/chipid/%s/command", chipIDStr);
-    snprintf(topicCommandAll,sizeof(topicCommandAll),"esp32/chipid/all/command");
+    uint64_t chipid = ESP.getEfuseMac();
+    snprintf(chipIDStr, sizeof(chipIDStr), "%04X%08X", (uint16_t)(chipid >> 32), (uint32_t)chipid);
+
+    snprintf(topicTelemetry, sizeof(topicTelemetry), "satellite/telemetry/%s", chipIDStr);
+    snprintf(topicStartup, sizeof(topicStartup), "satellite/startup/%s", chipIDStr);
+    snprintf(topicCommand,   sizeof(topicCommand),   "system/command/%s", chipIDStr);
 
     Serial.print("Chip ID: "); Serial.print(chipIDStr);
     Serial.print(" | FW Version: "); Serial.println(FW_VERSION);

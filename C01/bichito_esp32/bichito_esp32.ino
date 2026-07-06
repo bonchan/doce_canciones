@@ -1,9 +1,8 @@
-
+constexpr const char* SCRIPT_NAME = "bichito_rover";
 #include "../../core/arduino/node_wifi.h"
 
-
 const bool sound = true;
-const bool debugLdrSpeaker = true;
+const bool debugLdrSpeaker = false;
 
 // 0 = normal
 // 1 = alien
@@ -54,7 +53,6 @@ const int turn[12] = { 1000, 100, 10, 1, 2, 3, 4, 40, 400, 4000, 5000, 6000 };
 
 
 void setup() {
-  Serial.begin(115200);
   setupNetwork();
 
   for (int i = 0; i < 7; i++) {
