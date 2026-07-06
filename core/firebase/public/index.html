@@ -197,10 +197,12 @@
           const delta = intervalSeconds - cleanSeconds;
 
           if (delta >= 0) {
-            // Counts down nicely while waiting for the next automated refresh
+            // 1. Keeps your original bright blue (#38bdf8) while things are online
+            syncCounterEl.style.color = "#38bdf8";
             syncCounterEl.innerText = `Refresh in ${delta} seconds`;
           } else {
-            // Flips over to counting up to show how long it has been offline
+            // 2. Swaps it to a bright red (#ef4444) the exact second it goes offline
+            syncCounterEl.style.color = "#ef4444";
             const absoluteSeconds = Math.abs(delta);
             syncCounterEl.innerText = `Offline for ${formatHumanReadable(absoluteSeconds)}`;
           }
