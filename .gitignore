@@ -13,5 +13,6 @@ mqtt.toe
 # misc
 MISC
 androidtools
+core/android/build/
 
 .DS_Store

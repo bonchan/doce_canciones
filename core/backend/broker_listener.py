@@ -7,6 +7,8 @@ import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 import database
 import topics
+from logger import logger
+
 
 load_dotenv()
 
@@ -72,7 +74,7 @@ def get_merged_state():
                     # Add other default fallback parameters your UI expects
                 }
     except Exception as e:
-        print(f"Database sync fallback error inside get_merged_state: {e}")
+        logger.error(f"Database sync fallback error inside get_merged_state: {e}")
 
     # 2. Layer live runtime values over the database seed
     current_cache = dict(LIVE_STATE_CACHE) 
@@ -106,7 +108,7 @@ def publish_event(event: dict):
 # ── MQTT callbacks ────────────────────────────────────────────────────────────
 
 def on_connect(client, userdata, flags, rc):
-    print(f"Connected to broker ({rc})")
+    logger.info(f"Connected to broker ({rc})")
     client.subscribe(topics.SATELLITE_TELEMETRY)
     client.subscribe(topics.SATELLITE_STARTUP)
 
@@ -123,7 +125,7 @@ def on_message(client, userdata, msg):
         parts = msg.topic.split("/")
 
         if len(parts) < 3:
-            print("Error in parts", parts)
+            logger.error("Error in parts", parts)
             return
 
         device_type = parts[0]
@@ -135,7 +137,7 @@ def on_message(client, userdata, msg):
             fw_version = data['fw']
             script_name = data['sn']
             database.get_or_create_device(chip_id, fw_version, script_name, device_type)
-            # print(f"satellite-startup: {chip_id}, fw: {fw_version}")
+            # logger.info(f"satellite-startup: {chip_id}, fw: {fw_version}")
 
         elif topic_type == "telemetry":
             data["_ts"] = time.time()
@@ -143,10 +145,10 @@ def on_message(client, userdata, msg):
             # database.update_device_telemetry(chip_id, data)
             publish_sys_state()
             _fire(_broadcast_cb(chip_id, data))
-            # print(f"satellite-telemetry: {data}")
+            # logger.info(f"satellite-telemetry: {data}")
 
     except Exception as e:
-        print(f"MQTT error on {msg.topic}: {e}")
+        logger.error(f"MQTT error on {msg.topic}: {e}")
 
 # ── heartbeat watchdog ────────────────────────────────────────────────────────
 
@@ -154,9 +156,9 @@ def on_message(client, userdata, msg):
 #     while True:
 #         time.sleep(5)
 #         if _last_heartbeat is None:
-#             print("DIS: never connected")
+#             logger.info("DIS: never connected")
 #         elif time.time() - _last_heartbeat > HB_TIMEOUT:
-#             print(f"DIS: silent for {int(time.time()-_last_heartbeat)}s")
+#             logger.info(f"DIS: silent for {int(time.time()-_last_heartbeat)}s")
 
 # ── startup ───────────────────────────────────────────────────────────────────
 

@@ -1,11 +1,9 @@
 import asyncio
-import logging
 from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, db
-import broker_listener  # To read your live metrics cache
-
-logger = logging.getLogger("uvicorn.error")
+import broker_listener
+from logger import logger
 
 class FirebaseDatabasePusher:
     def __init__(self, cred_path: str, database_url: str, interval_seconds: int = 60):

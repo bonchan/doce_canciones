@@ -1,6 +1,7 @@
 import os
 from tinydb import TinyDB, Query
 from dotenv import load_dotenv
+from logger import logger
 
 load_dotenv()
 
@@ -13,7 +14,7 @@ Device = Query()
 
 if CLEAR_DB_ON_STARTUP:
     devices_table.truncate()
-    print("DB cleared on startup.")
+    logger.info("DB cleared on startup.")
 
 def get_or_create_device(chip_id, fw_version, script_name, device_type):
     device = devices_table.get(Device.id == chip_id)

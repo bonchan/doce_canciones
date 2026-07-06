@@ -10,6 +10,7 @@ import threading
 import adb_watchdog
 from firebase_pusher import FirebaseDatabasePusher
 from dotenv import load_dotenv
+from logger import logger
 
 load_dotenv()
 
@@ -112,6 +113,6 @@ async def websocket_endpoint(websocket: WebSocket):
         active_connections.remove(websocket)
 
 if __name__ == "__main__":
-    # threading.Thread(target=adb_watchdog.watchdog, daemon=True).start()
+    threading.Thread(target=adb_watchdog.watchdog, daemon=True).start()
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
