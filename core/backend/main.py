@@ -33,7 +33,7 @@ async def broadcast_to_websocket(chip_id, telemetry):
     for cid, data in broker_listener.LIVE_STATE_CACHE.items():
         entry = dict(data)
         last_ts = entry.pop("_ts", 0)
-        entry["online"] = (now - last_ts) < broker_listener.SAT_TTL
+        entry["online"] = (now - last_ts) < broker_listener.DEVICE_TTL
         output[cid] = entry
 
     payload = {
@@ -50,7 +50,7 @@ async def broadcast_to_websocket(chip_id, telemetry):
 async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     broker_listener.start_mqtt_listener(broadcast_to_websocket, loop)
-    time.sleep(10)
+    time.sleep(5)
     await firebase_pusher.start()
     yield
     await firebase_pusher.stop()

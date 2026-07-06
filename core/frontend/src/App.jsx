@@ -29,56 +29,86 @@ export default function App() {
 
   // 2. WebSocket Stream
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8000/ws/telemetry');
-    ws.onopen = () => setWsStatus("Connected");
-    ws.onclose = () => setWsStatus("Disconnected. Retrying...");
+    let ws = null;
+    let reconnectTimer = null;
+    let isMounted = true;
 
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
+    function connect() {
+      if (!isMounted) return;
 
-      if (message.type === "CONFIG") {
-        // [{id, name, x, y}, ...]
-        message.data.forEach(cfg => {
-          setDevices(prev => {
-            if (!prev[cfg.id]) return prev;
-            return {
-              ...prev,
-              [cfg.id]: {
-                ...prev[cfg.id],
-                meta: {
-                  ...prev[cfg.id].meta,
-                  fw: cfg.fw,
-                  name: cfg.name,
-                  position: { x: cfg.x, y: cfg.y, z: prev[cfg.id].meta?.position?.z || 0 }
+      ws = new WebSocket('ws://localhost:8000/ws/telemetry');
+      
+      ws.onopen = () => {
+        if (isMounted) setWsStatus("Connected");
+      };
+
+      ws.onclose = () => {
+        if (!isMounted) return;
+        setWsStatus("Disconnected. Retrying...");
+        
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+
+      ws.onmessage = (event) => {
+        if (!isMounted) return;
+        const message = JSON.parse(event.data);
+
+        if (message.type === "CONFIG") {
+          // [{id, name, x, y}, ...]
+          message.data.forEach(cfg => {
+            setDevices(prev => {
+              if (!prev[cfg.id]) return prev;
+              return {
+                ...prev,
+                [cfg.id]: {
+                  ...prev[cfg.id],
+                  meta: {
+                    ...prev[cfg.id].meta,
+                    fw: cfg.fw,
+                    name: cfg.name,
+                    position: { x: cfg.x, y: cfg.y, z: prev[cfg.id].meta?.position?.z || 0 }
+                  }
                 }
-              }
-            };
+              };
+            });
           });
-        });
-      }
+        }
 
-      else if (message.type === "STATE_UPDATE") {
-        setDevices(prev => {
-          const updated = { ...prev };
-          Object.entries(message.data).forEach(([chipId, telemetry]) => {
-            if (dragTargetRef.current === chipId) {
-              // don't update position while dragging
-              updated[chipId] = {
-                ...updated[chipId],
-                telemetry
-              };
-            } else {
-              updated[chipId] = {
-                meta: updated[chipId]?.meta || { id: chipId, name: chipId, configured: false, position: { x: 0.5, y: 0.5, z: 0 } },
-                telemetry
-              };
-            }
+        else if (message.type === "STATE_UPDATE") {
+          setDevices(prev => {
+            const updated = { ...prev };
+            Object.entries(message.data).forEach(([chipId, telemetry]) => {
+              if (dragTargetRef.current === chipId) {
+                // don't update position while dragging
+                updated[chipId] = {
+                  ...updated[chipId],
+                  telemetry
+                };
+              } else {
+                updated[chipId] = {
+                  meta: updated[chipId]?.meta || { id: chipId, name: chipId, configured: false, position: { x: 0.5, y: 0.5, z: 0 } },
+                  telemetry
+                };
+              }
+            });
+            return updated;
           });
-          return updated;
-        });
-      }
+        }
+      };
+    }
+
+    connect();
+
+    return () => {
+      isMounted = false;
+      clearTimeout(reconnectTimer);
+      if (ws) ws.close();
     };
-    return () => ws.close();
   }, []);
 
   // 3. Save config
@@ -195,72 +225,81 @@ export default function App() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {Object.values(devices)
-          .sort((a, b) => Number(b.telemetry?.online) - Number(a.telemetry?.online))
-          .map((node) => (
-            <div
-              key={node.meta.id}
-              className={`card ${!node.meta.configured ? 'unconfigured' : ''}`}
-              style={{ padding: '12px', borderRadius: '8px', background: '#1f2937', border: `1px solid ${node.telemetry?.online === false ? '#dc2626' : '#374151'}` }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            .sort((a, b) => Number(b.meta?.device_type) - Number(a.meta?.device_type))
+            .sort((a, b) => Number(b.telemetry?.online) - Number(a.telemetry?.online))
+            .map((node) => (
+              <div
+                key={node.meta.id}
+                className={`card ${!node.meta.configured ? 'unconfigured' : ''}`}
+                style={{ padding: '12px', borderRadius: '8px', background: `${node.meta?.device_type === "satellite" ? '#333d2a' : '#1f2937'}`, border: `1px solid ${node.telemetry?.online === false ? '#dc2626' : '#374151'}` }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
 
-                {editingId === node.meta.id ? (
-                  <input
-                    type="text"
-                    defaultValue={node.meta.name}
-                    autoFocus
-                    style={{ background: '#111827', border: '1px solid #10b981', color: 'white', fontSize: '14px', padding: '2px 6px', borderRadius: '4px', width: '140px' }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { saveDeviceConfigToDatabase(node.meta.id, e.target.value, node.meta.position.x, node.meta.position.y, node.meta.position.z); setEditingId(null); }
-                      if (e.key === 'Escape') setEditingId(null);
-                    }}
-                    onBlur={(e) => { saveDeviceConfigToDatabase(node.meta.id, e.target.value, node.meta.position.x, node.meta.position.y, node.meta.position.z); setEditingId(null); }}
-                  />
-                ) : (
-                  <strong style={{ fontSize: '14px', cursor: 'pointer' }} onDoubleClick={() => setEditingId(node.meta.id)} title="Double-click to rename">
-                    {node.meta.configured ? (node.meta.name || 'NONAME') : node.meta.id}
-                  </strong>
-                )}
+                  {editingId === node.meta.id ? (
+                    <input
+                      type="text"
+                      defaultValue={node.meta.name}
+                      autoFocus
+                      style={{ background: '#111827', border: '1px solid #10b981', color: 'white', fontSize: '14px', padding: '2px 6px', borderRadius: '4px', width: '140px' }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { saveDeviceConfigToDatabase(node.meta.id, e.target.value, node.meta.position.x, node.meta.position.y, node.meta.position.z); setEditingId(null); }
+                        if (e.key === 'Escape') setEditingId(null);
+                      }}
+                      onBlur={(e) => { saveDeviceConfigToDatabase(node.meta.id, e.target.value, node.meta.position.x, node.meta.position.y, node.meta.position.z); setEditingId(null); }}
+                    />
+                  ) : (
+                    <strong style={{ fontSize: '14px', cursor: 'pointer' }} onDoubleClick={() => setEditingId(node.meta.id)} title="Double-click to rename">
+                      {node.meta.configured ? (node.meta.name || 'NONAME') : node.meta.id}
+                    </strong>
+                  )}
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {/* online indicator */}
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: node.telemetry?.online === false ? '#ef4444' : '#10b981' }} />
-                  {node.meta.configured && <span style={{ color: '#8a8988', fontSize: '10px' }}>{node.meta.id}</span>}
-                  {!node.meta.configured && <span style={{ color: '#fbbf24', fontSize: '10px', fontWeight: 'bold' }}>NEW</span>}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {/* online indicator */}
+                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: node.telemetry?.online === false ? '#ef4444' : '#10b981' }} />
+                    {node.meta.configured && <span style={{ color: '#8a8988', fontSize: '10px' }}>{node.meta.id}</span>}
+                    {!node.meta.configured && <span style={{ color: '#fbbf24', fontSize: '10px', fontWeight: 'bold' }}>NEW</span>}
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px', background: '#111827', padding: '6px', borderRadius: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Firmware: <span style={{ color: '#fff' }}>{node.meta.fw}</span></span>
+                    <span>Script: <span style={{ color: '#fff' }}>{node.meta.sn}</span></span>
+                  </div>
+                  {
+                    node.meta?.device_type === "satellite" &&
+                    <button
+                      onClick={() => updateDevice(node.meta.id, node.meta.sn)}
+                      style={{ marginTop: '6px', width: '100%', background: '#1d4ed8', color: '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
+                    >
+                      Update Firmware
+                    </button>
+                  }
+                </div>
+                {
+                  node.meta?.device_type === "satellite" ?
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#9ca3af', marginTop: '8px', background: '#111827', padding: '6px', borderRadius: '4px' }}>
+                      <span>LDR1: <span style={{ color: '#fff' }}>{node.telemetry?.ldr1 ?? '-'}</span></span>
+                      <span>LDR2: <span style={{ color: '#fff' }}>{node.telemetry?.ldr2 ?? '-'}</span></span>
+                      <span>Freq: <span style={{ color: '#f472b6' }}>{node.telemetry?.freq ?? '-'}Hz</span></span>
+                      <span>RSSI: <span style={{ color: '#34d399' }}>{node.telemetry?.wifi_rssi ?? '-'}</span></span>
+                      <span>millis: <span style={{ color: '#34d399' }}>{node.telemetry?.millis ?? '-'}</span></span>
+                    </div>
+                    :
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#9ca3af', marginTop: '8px', background: '#111827', padding: '6px', borderRadius: '4px', overflow: 'auto' }}>
+                      <span>telemetry: <span style={{ color: '#fff' }}>{JSON.stringify(node.telemetry) ?? '-'}</span></span>
+                    </div>
+                }
+                <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                  <button
+                    onClick={() => identifyDevice(node.meta.id)}
+                    style={{ flex: 1, color: node.telemetry?.status_led === 1 ? '#ffff' : '#000000', background: node.telemetry?.status_led === 1 ? '#2563eb' : '#ebb625', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    {node.telemetry?.status_led === 1 ? "Identified!" : "Click to Identify"}
+                  </button>
                 </div>
               </div>
-
-              <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px', background: '#111827', padding: '6px', borderRadius: '4px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Firmware: <span style={{ color: '#fff' }}>{node.meta.fw}</span></span>
-                  <span>Script: <span style={{ color: '#fff' }}>{node.meta.sn}</span></span>
-                </div>
-                <button
-                  onClick={() => updateDevice(node.meta.id, node.meta.sn)}
-                  style={{ marginTop: '6px', width: '100%', background: '#1d4ed8', color: '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
-                >
-                  Update Firmware
-                </button>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#9ca3af', marginTop: '8px', background: '#111827', padding: '6px', borderRadius: '4px' }}>
-                <span>LDR1: <span style={{ color: '#fff' }}>{node.telemetry?.ldr1 ?? '-'}</span></span>
-                <span>LDR2: <span style={{ color: '#fff' }}>{node.telemetry?.ldr2 ?? '-'}</span></span>
-                <span>Freq: <span style={{ color: '#f472b6' }}>{node.telemetry?.freq ?? '-'}Hz</span></span>
-                <span>RSSI: <span style={{ color: '#34d399' }}>{node.telemetry?.wifi_rssi ?? '-'}</span></span>
-                <span>millis: <span style={{ color: '#34d399' }}>{node.telemetry?.millis ?? '-'}</span></span>
-              </div>
-
-              <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                <button
-                  onClick={() => identifyDevice(node.meta.id)}
-                  style={{ flex: 1, color: node.telemetry?.status_led === 1 ? '#ffff' : '#000000', background: node.telemetry?.status_led === 1 ? '#2563eb' : '#ebb625', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
-                >
-                  {node.telemetry?.status_led === 1 ? "Identified!" : "Click to Identify"}
-                </button>
-              </div>
-            </div>
-          ))}
+            ))}
         </div>
       </aside>
 

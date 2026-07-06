@@ -15,13 +15,14 @@ if CLEAR_DB_ON_STARTUP:
     devices_table.truncate()
     print("DB cleared on startup.")
 
-def get_or_create_device(chip_id, fw_version, script_name):
+def get_or_create_device(chip_id, fw_version, script_name, device_type):
     device = devices_table.get(Device.id == chip_id)
     if not device:
         device = {
             "id": chip_id,
             "fw": fw_version,
             "sn": script_name,
+            "device_type": device_type,
             "name": None,
             "configured": False,
             "position": {"x": 0.5, "y": 0.5, "z": 0.0}
@@ -50,6 +51,7 @@ def get_config_payload():
         {
             "id": d["id"],
             "fw": d["fw"],
+            "device_type": d["device_type"],
             "name": d.get("name") or d["id"],
             "x": d["position"]["x"],
             "y": d["position"]["y"],

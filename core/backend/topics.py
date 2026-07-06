@@ -1,19 +1,25 @@
 # SAT → NUC
-SAT_TELEMETRY   = "esp32/chipid/{id}/telemetry"
-SAT_STATUS      = "esp32/chipid/{id}/status"
+SATELLITE_TELEMETRY   = "satellite/telemetry/+"
+SATELLITE_STARTUP     = "satellite/startup/+"
 
 # NUC → SAT
-SAT_COMMAND     = "esp32/chipid/{id}/command"
-SAT_COMMAND_ALL = "esp32/chipid/all/command"
+SYSTEM_COMMAND     = "system/command/+"
+SYSTEM_COMMAND_ALL = "system/command/all"
 
 # NUC → DIS
-SYS_STATE       = "system/state"
-SYS_CONFIG      = "system/config"
-SYS_EVENT       = "system/event"
+SYSTEM_STATE       = "system/state"
+SYSTEM_CONFIG      = "system/config"
+SYSTEM_EVENT       = "system/event"
 
 # DIS → NUC
-SYS_HEARTBEAT   = "system/heartbeat"
+SYSTEM_HEARTBEAT   = "system/heartbeat"
 
-def sat_telemetry(chip_id):   return SAT_TELEMETRY.replace("{id}", chip_id)
-def sat_status(chip_id):      return SAT_STATUS.replace("{id}", chip_id)
-def sat_command(chip_id):     return SAT_COMMAND.replace("{id}", chip_id)
+# DIS → NUC
+DISPLAY_TELEMETRY   = "display/telemetry/+"
+DISPLAY_STARTUP     = "display/startup/+"
+
+def satellite_telemetry(chip_id):  return SATELLITE_TELEMETRY.replace("+", chip_id)
+
+def system_command(chip_id):       return SYSTEM_COMMAND.replace("+", chip_id)
+
+def display_telemetry(chip_id):    return DISPLAY_TELEMETRY.replace("+", chip_id)

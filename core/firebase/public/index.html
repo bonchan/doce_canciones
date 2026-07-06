@@ -34,15 +34,60 @@
       </div>
     </header>
 
-    <main class="device-grid" id="devices-container">
+    <h1>Satellites</h1>
+    <main class="device-grid" id="satellites-container">
+      <div class="empty-state">Waiting for data payload from Firebase...</div>
+    </main>
+
+    <h1>Displays</h1>
+    <main class="device-grid" id="displays-container">
       <div class="empty-state">Waiting for data payload from Firebase...</div>
     </main>
   </div>
 
   <script>
+
+    function formatHumanReadable(totalSeconds) {
+      if (totalSeconds === 0) return "0 seconds";
+
+      let remainder = totalSeconds;
+
+      // 1 year = 365 days * 24 * 60 * 60 = 31,536,000 seconds
+      const y = Math.floor(remainder / 31536000);
+      remainder %= 31536000;
+
+      // 1 month average = 30.44 days * 24 * 60 * 60 = 2,630,016 seconds
+      const mo = Math.floor(remainder / 2630016);
+      remainder %= 2630016;
+
+      // 1 day = 86,400 seconds
+      const d = Math.floor(remainder / 86400);
+      remainder %= 86400;
+
+      // 1 hour = 3,600 seconds
+      const h = Math.floor(remainder / 3600);
+      remainder %= 3600;
+
+      // 1 minute = 60 seconds
+      const m = Math.floor(remainder / 60);
+      const s = remainder % 60;
+
+      const parts = [];
+
+      if (y > 0) parts.push(y === 1 ? "1 year" : `${y} years`);
+      if (mo > 0) parts.push(mo === 1 ? "1 month" : `${mo} months`);
+      if (d > 0) parts.push(d === 1 ? "1 day" : `${d} days`);
+      if (h > 0) parts.push(h === 1 ? "1 hour" : `${h} hours`);
+      if (m > 0) parts.push(m === 1 ? "1 minute" : `${m} minutes`);
+      if (s > 0) parts.push(s === 1 ? "1 second" : `${s} seconds`);
+
+      return parts.join(", ");
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
       const syncTimeEl = document.getElementById("sync-timestamp");
-      const containerEl = document.getElementById("devices-container");
+      const satellitesContainerEl = document.getElementById("satellites-container");
+      const displaysContainerEl = document.getElementById("displays-container");
 
       // ── SELECT THE NEW COUNTER DOM NODE ──
       const syncCounterEl = document.getElementById("sync-counter");
@@ -59,7 +104,8 @@
           const payload = snapshot.val();
 
           if (!payload) {
-            containerEl.innerHTML = `<div class="empty-state">No device snapshots found in database tree.</div>`;
+            satellitesContainerEl = `<div class="empty-state">No device snapshots found in database tree.</div>`;
+            displaysContainerEl = `<div class="empty-state">No device snapshots found in database tree.</div>`;
             syncTimeEl.innerText = "Never";
             syncCounterEl.innerText = "";
             return;
@@ -79,13 +125,15 @@
             intervalSeconds = payload.interval_seconds
           }
 
-          containerEl.innerHTML = "";
+          satellitesContainerEl.innerHTML = "";
+          displaysContainerEl.innerHTML = "";
 
           const devices = payload.devices || {};
           const deviceIds = Object.keys(devices);
 
           if (deviceIds.length === 0) {
-            containerEl.innerHTML = `<div class="empty-state">No devices currently reporting sync nodes.</div>`;
+            satellitesContainerEl.innerHTML = `<div class="empty-state">No devices currently reporting sync nodes.</div>`;
+            displaysContainerEl.innerHTML = `<div class="empty-state">No devices currently reporting sync nodes.</div>`;
             return;
           }
 
@@ -125,7 +173,12 @@
               </div>
             `;
 
-            containerEl.appendChild(card);
+            if (deviceData.device_type == 'satellite') {
+              satellitesContainerEl.appendChild(card);
+            } else {
+              displaysContainerEl.appendChild(card);
+            }
+
           });
         }, (error) => {
           console.error("Firebase database read error execution trap:", error);
@@ -138,15 +191,19 @@
           if (!lastSyncDate) return;
 
           const now = new Date();
-          // Divide by 1000 to drop millisecond precision down to raw integers
           const secondsElapsed = Math.floor((now - lastSyncDate) / 1000);
-
-          // Safety catch if system clocks run slightly desynced
           const cleanSeconds = Math.max(0, secondsElapsed);
 
-          const displayNumber = intervalSeconds - cleanSeconds
+          const delta = intervalSeconds - cleanSeconds;
 
-          syncCounterEl.innerText = displayNumber > -1 ? `Refresh in ${displayNumber} seconds` : `Offline for ${-displayNumber} seconds`;
+          if (delta >= 0) {
+            // Counts down nicely while waiting for the next automated refresh
+            syncCounterEl.innerText = `Refresh in ${delta} seconds`;
+          } else {
+            // Flips over to counting up to show how long it has been offline
+            const absoluteSeconds = Math.abs(delta);
+            syncCounterEl.innerText = `Offline for ${formatHumanReadable(absoluteSeconds)}`;
+          }
         }, 1000);
 
       } catch (e) {
