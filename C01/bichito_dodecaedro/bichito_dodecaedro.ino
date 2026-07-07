@@ -2,6 +2,10 @@
 constexpr const char* SCRIPT_NAME = "bichito_dodecaedro";
 #include "../../core/arduino/node_wifi.h"
 
+
+int ALTER_FREQ = 1400;
+
+
 #define NUM_LEDS 5
 #define LED_TYPE PL9823
 #define COLOR_ORDER GRB
@@ -27,7 +31,7 @@ void setup() {
 void loop() {
   tickNetwork();
   tickCommands();
-  
+
   int lightValue = analogRead(LDR_PIN);
 
   if (lightValue < LIGHT_THRESHOLD) {
@@ -37,6 +41,18 @@ void loop() {
   int freq = random(-20, 20) + map(lightValue, 0, 4095, 2000, 20);
 
   int brightness = map(lightValue, 0, 4095, 255, 25);
+
+  if (alteredActive) {
+    if ((millis() / 60) % 2) {
+      fill_solid(leds, NUM_LEDS, CRGB::Red);
+    } else {
+      fill_solid(leds, NUM_LEDS, CRGB::Black);
+    }
+    freq = random(-20, -1) + ALTER_FREQ;
+  } else {
+    hue = hue % 256;
+    fill_rainbow(leds, NUM_LEDS, hue, 50);
+  }
 
   // play the pitch:
   if (freq > 100) {
@@ -50,9 +66,9 @@ void loop() {
     delay(5);
   }
 
-  hue = hue % 256;
 
-  fill_rainbow(leds, NUM_LEDS, hue, 50);
+
+
   FastLED.setBrightness(brightness);
   FastLED.show();
 
@@ -62,6 +78,10 @@ void loop() {
   doc["freq"] = freq;
 
   publishTelemetry(doc);
+
+  if (freq > ALTER_FREQ) {
+    publishAlter();
+  }
 
   delay(1);
 }

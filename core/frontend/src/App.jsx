@@ -37,7 +37,7 @@ export default function App() {
       if (!isMounted) return;
 
       ws = new WebSocket('ws://localhost:8000/ws/telemetry');
-      
+
       ws.onopen = () => {
         if (isMounted) setWsStatus("Connected");
       };
@@ -45,7 +45,7 @@ export default function App() {
       ws.onclose = () => {
         if (!isMounted) return;
         setWsStatus("Disconnected. Retrying...");
-        
+
         clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(connect, 3000);
       };
@@ -138,13 +138,13 @@ export default function App() {
       .catch(err => console.error("Config save failed:", err));
   };
 
-  const identifyDevice = (chipId) => {
+  const commandDevice = (chipId, command) => {
     // setIdentifyingId(turnOn ? chipId : null);
     fetch(`http://localhost:8000/api/devices/${chipId}/command`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        cmd: "IDENTIFY",
+        cmd: command,
         params: { duration: 2000 }
       })
     }).catch(err => console.error("Command failed:", err));
@@ -223,10 +223,37 @@ export default function App() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+          <button
+            onClick={() => commandDevice("all", "ALTER")}
+            style={{ flex: 1, color: false ? '#ffff' : '#000000', background: false ? '#eb5325' : '#ebb625', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
+          >
+            {false ? "Altered!" : "Click to Alter"}
+          </button>
+          <button
+            onClick={() => commandDevice("all", "IDENTIFY")}
+            style={{ flex: 1, color: false === 1 ? '#ffff' : '#000000', background: false ? '#2563eb' : '#64eb25', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
+          >
+            {false ? "Identified!" : "Click to Identify"}
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '8px' }}>
           {Object.values(devices)
-            .sort((a, b) => Number(b.meta?.device_type) - Number(a.meta?.device_type))
-            .sort((a, b) => Number(b.telemetry?.online) - Number(a.telemetry?.online))
+            .sort((a, b) => {
+              // 1. Primary Sort: Device Type Alphabetically (A to Z)
+              const typeA = (a.meta?.device_type || "").toLowerCase();
+              const typeB = (b.meta?.device_type || "").toLowerCase();
+
+              if (typeA > typeB) return -1;
+              if (typeA > typeB) return 1;
+
+              // 2. Secondary Sort: If types are identical, sort by Online status (True first)
+              const onlineA = a.telemetry?.online ? 1 : 0;
+              const onlineB = b.telemetry?.online ? 1 : 0;
+
+              return onlineB - onlineA; // 1 - 0 puts online (1) before offline (0)
+            })
             .map((node) => (
               <div
                 key={node.meta.id}
@@ -292,8 +319,14 @@ export default function App() {
                 }
                 <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
                   <button
-                    onClick={() => identifyDevice(node.meta.id)}
-                    style={{ flex: 1, color: node.telemetry?.status_led === 1 ? '#ffff' : '#000000', background: node.telemetry?.status_led === 1 ? '#2563eb' : '#ebb625', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
+                    onClick={() => commandDevice(node.meta.id, "ALTER")}
+                    style={{ flex: 1, color: node.telemetry?.status_led === 1 ? '#ffff' : '#000000', background: node.telemetry?.status_led === 1 ? '#eb5325' : '#ebb625', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    {node.telemetry?.status_led === 1 ? "Altered!" : "Click to Alter"}
+                  </button>
+                  <button
+                    onClick={() => commandDevice(node.meta.id, "IDENTIFY")}
+                    style={{ flex: 1, color: node.telemetry?.status_led === 1 ? '#ffff' : '#000000', background: node.telemetry?.status_led === 1 ? '#2563eb' : '#64eb25', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
                   >
                     {node.telemetry?.status_led === 1 ? "Identified!" : "Click to Identify"}
                   </button>

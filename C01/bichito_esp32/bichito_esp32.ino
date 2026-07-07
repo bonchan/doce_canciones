@@ -1,6 +1,10 @@
 constexpr const char* SCRIPT_NAME = "bichito_rover";
 #include "../../core/arduino/node_wifi.h"
 
+
+int ALTER_FREQ = 5800;
+
+
 const bool sound = true;
 const bool debugLdrSpeaker = false;
 
@@ -87,7 +91,7 @@ void setup() {
 void loop() {
   tickNetwork();
   tickCommands();
-  
+
   unsigned long now = millis();
   if (now - lastUpdate > updateInterval) {
     lastUpdate = now;
@@ -118,24 +122,39 @@ void loop() {
 
   int ledBright = 0;
 
-  // Play the tone
-  if (freq > 100) {
-    if (debugLdrSpeaker)
-      Serial.print("  TONE ");
+  if (alteredActive) {
+
+    if ((millis() / 60) % 2) {
+      setRGB(LOW, HIGH, HIGH);
+    } else {
+      setRGB(HIGH, HIGH, HIGH);
+    }
+
+    freq = random(-20, -1) + ALTER_FREQ;
     if (sound) {
       tone(speakerPin, freq);
     }
-    displayNumber(disp, defaultPattern);
-    yield();
-    setRandomRGB();
-    ledBright = 255;
+
   } else {
-    if (debugLdrSpeaker)
-      Serial.print("NOTONE ");
-    noTone(speakerPin);
-    displayNumber(turn[counter], 2);
-    yield();
-    setRGB(HIGH, HIGH, HIGH);
+    // Play the tone
+    if (freq > 100) {
+      if (debugLdrSpeaker)
+        Serial.print("  TONE ");
+      if (sound) {
+        tone(speakerPin, freq);
+      }
+      displayNumber(disp, defaultPattern);
+      yield();
+      setRandomRGB();
+      ledBright = 255;
+    } else {
+      if (debugLdrSpeaker)
+        Serial.print("NOTONE ");
+      noTone(speakerPin);
+      displayNumber(turn[counter], 2);
+      yield();
+      setRGB(HIGH, HIGH, HIGH);
+    }
   }
 
   // Debug
@@ -156,6 +175,10 @@ void loop() {
   doc["freq"] = freq;  // your value
 
   publishTelemetry(doc);
+
+  if (freq > ALTER_FREQ) {
+    publishAlter();
+  }
 
   delay(1);
 }

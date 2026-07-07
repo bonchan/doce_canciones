@@ -13,6 +13,7 @@ constexpr const char* FW_VERSION = "0.0.5";
 
 // ── timing ────────────────────────────────────────────────────────────────────
 static unsigned long lastTelemetryPub = 0;
+static unsigned long lastAlterPub = 0;
 static unsigned long lastRetryMs      = 0;
 #define RETRY_INTERVAL_MS    10000UL
 #define PUBLISH_INTERVAL_MS  100UL
@@ -32,6 +33,9 @@ static unsigned long lastRetryMs      = 0;
 static bool ledActive         = false;
 static unsigned long ledUntil = 0;
 
+static bool alteredActive         = false;
+static unsigned long alteredUntil = 0;
+
 // ── globals ───────────────────────────────────────────────────────────────────
 WiFiClient   espClient;
 PubSubClient mqttClient(espClient);
@@ -41,6 +45,7 @@ char chipIDStr[20];
 char topicTelemetry[64];
 char topicStartup[64];
 char topicCommand[64];
+char topicCommandAll[64];
 
 bool wifiConnected = false;
 bool mqttConnected = false;
@@ -50,6 +55,13 @@ void tickCommands() {
     if (ledActive && millis() >= ledUntil) {
         digitalWrite(LED_PIN, LED_OFF);
         ledActive = false;
+        Serial.println("tickCommands led end");
+    }
+    if (alteredActive && millis() >= alteredUntil) {
+        // digitalWrite(LED_PIN, LED_OFF);
+        alteredActive = false;
+        Serial.println("tickCommands alter end");
+
     }
 }
 
@@ -108,6 +120,10 @@ void onCommand(const char* cmd, JsonObject params) {
         digitalWrite(LED_PIN, LED_ON);
         ledActive = true;
         ledUntil  = millis() + duration;
+    } else if (strcmp(cmd, "ALTER") == 0) {
+        unsigned long duration = params["duration"] | 3000;
+        alteredActive = true;
+        alteredUntil  = millis() + duration;
     } else if (strcmp(cmd, "UPDATE") == 0) {
         const char* url = params["url"] | "";
         if (strlen(url) == 0) {
@@ -192,9 +208,11 @@ void setupNetwork() {
     snprintf(topicTelemetry, sizeof(topicTelemetry), "satellite/telemetry/%s", chipIDStr);
     snprintf(topicStartup, sizeof(topicStartup), "satellite/startup/%s", chipIDStr);
     snprintf(topicCommand,   sizeof(topicCommand),   "system/command/%s", chipIDStr);
+    snprintf(topicCommandAll,   sizeof(topicCommandAll),   "system/command/%s", "all");
 
     Serial.print("Chip ID: "); Serial.print(chipIDStr);
-    Serial.print(" | FW Version: "); Serial.println(FW_VERSION);
+    Serial.print(" | FW Version: "); Serial.print(FW_VERSION);
+    Serial.print(" | LED_PIN: "); Serial.println(LED_PIN);
 
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LED_OFF);
@@ -237,7 +255,7 @@ void tickNetwork() {
     mqttClient.loop();
 }
 
-// ── publish telemetry ─────────────────────────────────────────────────────────
+// ── publishers ─────────────────────────────────────────────────────────
 void publishTelemetry(JsonDocument& doc) {
     if (!mqttConnected) return;
     if (millis() - lastTelemetryPub < PUBLISH_INTERVAL_MS) return;
@@ -251,6 +269,20 @@ void publishTelemetry(JsonDocument& doc) {
     mqttClient.publish(topicTelemetry, buf);
     delay(1);
     lastTelemetryPub = millis();
+}
+
+void publishAlter() {
+    if (!mqttConnected) return;
+    if (millis() - lastAlterPub < PUBLISH_INTERVAL_MS) return;
+
+    JsonDocument doc;
+    doc["cmd"] = "ALTER";
+
+    char buf[128];
+    serializeJson(doc, buf);
+    mqttClient.publish(topicCommandAll, buf);
+    delay(1);
+    lastAlterPub = millis();
 }
 
 

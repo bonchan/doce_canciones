@@ -2,7 +2,14 @@
 #define FASTLED_ESP32_DRIVER RMT
 #include <driver/i2s.h>
 #include <math.h>
+constexpr const char* SCRIPT_NAME = "bichito_max";
 #include "../../core/arduino/node_wifi.h"
+
+
+int ALTER_FREQ = 1900000;
+
+
+const bool sound = true;
 
 #define LDR_PIN_1 2
 #define LDR_PIN_2 4
@@ -81,6 +88,7 @@ void setup() {
 
 void loop() {
   tickNetwork();
+  tickCommands();
 
   if (!wifiConnected || !mqttConnected) {
     digitalWrite(LED_PIN, (millis() / 500) % 2);
@@ -88,6 +96,8 @@ void loop() {
 
   int lightValue1 = analogRead(LDR_PIN_1);  // pitch
   int lightValue2 = analogRead(LDR_PIN_2);  // chop rate
+
+  lightValue1 = map(lightValue1, 2100, 4095, 0, 4095);
 
   // LDR1 → pitch: 40Hz–800Hz, portamento smoothed
   float targetHz1 = map(4095 - lightValue1, 0, 4095, 40, 800);
@@ -122,7 +132,9 @@ void loop() {
   }
 
   size_t written;
-  i2s_write(I2S_NUM_0, buf, sizeof(buf), &written, portMAX_DELAY);
+  if (sound) {
+    i2s_write(I2S_NUM_0, buf, sizeof(buf), &written, portMAX_DELAY);
+  }
 
   int brightness = map(lightValue1, 0, 4095, 255, 25);
 
@@ -132,13 +144,43 @@ void loop() {
     if (s > peak) peak = s;
   }
 
-  int ledsOn = map(peak, 0, AMPLITUDE, 0, NUM_LEDS);
-  ledsOn = constrain(ledsOn, 0, NUM_LEDS);
 
-  for (int i = 0; i < NUM_LEDS; i++) {
-    digitalWrite(ledPins[i], i < ledsOn ? HIGH : LOW);
+
+  if (alteredActive) {
+    for (int i = 0; i < 6; i++) {
+      digitalWrite(ledPins[i], LOW);
+    }
+
+    if ((millis() / 60) % 2) {
+      digitalWrite(ledPins[6], LOW);
+    } else {
+      digitalWrite(ledPins[6], HIGH);
+    }
+
+    currentHz2 = random(-20, -1) + ALTER_FREQ;
+  } else {
+    int ledsOn = map(peak, 0, AMPLITUDE, 0, NUM_LEDS);
+    ledsOn = constrain(ledsOn, 0, NUM_LEDS);
+    for (int i = 0; i < NUM_LEDS; i++) {
+      digitalWrite(ledPins[i], i < ledsOn ? HIGH : LOW);
+    }
   }
 
-  publishState(4095 - lightValue1, brightness, currentHz2);
+
+
+
+
+
+  JsonDocument doc;
+  doc["ldr1"] = lightValue1;
+  doc["ldr2"] = lightValue2;
+  doc["freq"] = currentHz2;
+
+  publishTelemetry(doc);
+
+  if (currentHz2 > ALTER_FREQ) {
+    publishAlter();
+  }
+
   delay(1);
 }
