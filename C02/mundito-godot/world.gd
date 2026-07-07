@@ -8,6 +8,7 @@ extends Node3D
 @export_category("Coordinates Origin Target")
 @export var START_LAT: float = -38.9516  # Default: Neuquén, Argentina
 @export var START_LON: float = -68.0591  # Default: Neuquén, Argentina
+@export var debug_mode: bool = true
 
 # Core calculated reference points (computed inside _ready)
 var z11_start_x: int = 624
@@ -15,6 +16,8 @@ var z11_start_y: int = 964
 
 var show_low_res: bool = true
 var show_high_res: bool = true
+
+var _debug_line_mesh: CylinderMesh
 
 # --- DISTANCE LIMITS ---
 const Z11_SIZE: float = 2000.0           
@@ -40,8 +43,18 @@ var _did_startup_burst := false
 var _memory_check_accum := 0.0
 const MEMORY_CHECK_INTERVAL := 1.0
 
+# Throttle how often we prune the stale part of the load queue -- doesn't
+# need to be every frame, but needs to be often enough to keep the queue
+# from ballooning while flying fast in one direction.
+var _queue_prune_accum := 0.0
+const QUEUE_PRUNE_INTERVAL := 0.3
+# Small margin over the actual selection circles so we don't cancel a tile
+# the exact same frame it'd otherwise get re-requested.
+const QUEUE_PRUNE_MARGIN := 1.15
+
 func _ready():
 	TerrainService.tile_ready.connect(_on_service_instanced_tile)
+	TerrainService.tile_cancelled.connect(_on_service_cancelled_tile)
 	
 	# Calculate structural Web Mercator grid numbers dynamically
 	calculate_start_tiles_from_coords()
@@ -52,6 +65,13 @@ func _ready():
 	mat.vertex_color_use_as_albedo = true
 	debug_mesh_instance.material_override = mat
 	add_child(debug_mesh_instance)
+	
+	# Shared unit-height cylinder reused (via per-instance scale.y) as the
+	# vertical status pole above every tile -- built once here, never per-tile.
+	_debug_line_mesh = CylinderMesh.new()
+	_debug_line_mesh.top_radius = 3.0
+	_debug_line_mesh.bottom_radius = 3.0
+	_debug_line_mesh.height = 1.0
 	
 	recalculate_tile_anchors()
 	scan_and_request_tiles()
@@ -75,6 +95,9 @@ func _input(_event):
 	if Input.is_key_pressed(KEY_2) and Engine.get_frames_drawn() % 10 == 0:
 		show_high_res = not show_high_res
 		update_layer_visibilities()
+	if Input.is_key_pressed(KEY_3) and Engine.get_frames_drawn() % 10 == 0:
+		debug_mode = not debug_mode
+		update_layer_visibilities()
 
 func _process(delta):
 	var cam_pos = camera.global_position
@@ -95,12 +118,22 @@ func _process(delta):
 		scan_and_request_tiles()
 
 	manage_dynamic_lod_and_offloading(cam_pos)
-	draw_debug_distance_circles(cam_pos)
+	if debug_mode:
+		draw_debug_distance_circles(cam_pos)
 
 	_memory_check_accum += delta
 	if _memory_check_accum >= MEMORY_CHECK_INTERVAL:
 		_memory_check_accum = 0.0
 		evaluate_memory_limits()
+
+	_queue_prune_accum += delta
+	if _queue_prune_accum >= QUEUE_PRUNE_INTERVAL:
+		_queue_prune_accum = 0.0
+		TerrainService.prune_stale_queue(
+			cam_pos,
+			HQ_NEAR_CIRCLE * QUEUE_PRUNE_MARGIN,
+			LQ_FAR_CIRCLE * QUEUE_PRUNE_MARGIN
+		)
 
 # Helper function to check if a circle intersects a square tile chunk
 func is_circle_touching_tile(circle_center: Vector3, radius: float, tile_min_x: float, tile_min_z: float, tile_size: float) -> bool:
@@ -216,22 +249,59 @@ func _on_service_instanced_tile(mesh: ArrayMesh, image: Image, task: Dictionary)
 	var yOffset = 0 if not task["is_flat"] else -10
 	mesh_instance.position = Vector3(task["offset_x"], yOffset, task["offset_z"])
 	
+	var tile_size = task["scale_size"]
+	var marker = _build_debug_marker(task, tile_size)
+	marker.visible = debug_mode
+	mesh_instance.add_child(marker)
+	
 	if not task["is_flat"]:
 		mesh_instance.visible = show_high_res
-		
-		var label_3d = Label3D.new()
-		label_3d.text = str(task["queue_idx"])
-		label_3d.font_size = 128
-		label_3d.modulate = Color.YELLOW
-		label_3d.outline_modulate = Color.BLACK
-		label_3d.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		label_3d.position = Vector3(Z11_SIZE / 2.0, 100.0, Z11_SIZE / 2.0)
-		mesh_instance.add_child(label_3d)
 	else:
 		mesh_instance.visible = show_low_res
 		
 	terrain_container.add_child(mesh_instance)
 	loaded_tiles[task["key"]] = mesh_instance
+
+# Builds a status pole + floating label above a tile's center: a colored
+# vertical line (green = HQ/z11, orange = LQ/z8) topped with a label showing
+# resolution tier, grid coordinates, and (for HQ tiles) load priority order.
+func _build_debug_marker(task: Dictionary, tile_size: float) -> Node3D:
+	var marker = Node3D.new()
+	marker.name = "DebugMarker"
+	
+	var is_hq = not task["is_flat"]
+	var pole_color = Color.LIME_GREEN if is_hq else Color.ORANGE
+	var pole_height = 200.0 if is_hq else 600.0
+	
+	var pole = MeshInstance3D.new()
+	pole.mesh = _debug_line_mesh
+	var pole_mat = StandardMaterial3D.new()
+	pole_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	pole_mat.albedo_color = pole_color
+	pole.material_override = pole_mat
+	pole.scale = Vector3(1, pole_height, 1)
+	pole.position = Vector3(tile_size / 2.0, pole_height / 2.0, tile_size / 2.0)
+	marker.add_child(pole)
+	
+	var label_3d = Label3D.new()
+	var tier_line = "HQ (z11)" if is_hq else "LQ (z8)"
+	var coord_line = "%d, %d" % [task["x"], task["y"]]
+	var extra_line = ("load #%d" % task["queue_idx"]) if is_hq else ""
+	label_3d.text = "%s\n%s\n%s" % [tier_line, coord_line, extra_line]
+	label_3d.font_size = 50000
+	label_3d.modulate = pole_color
+	label_3d.outline_modulate = Color.BLACK
+	label_3d.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label_3d.position = Vector3(tile_size / 2.0, pole_height + 30.0, tile_size / 2.0)
+	marker.add_child(label_3d)
+	
+	return marker
+
+func _on_service_cancelled_tile(task: Dictionary):
+	# The tile never got a mesh, so nothing to free from the scene -- just
+	# forget we requested it, so a future scan can queue it again if the
+	# camera swings back this way.
+	requested_tiles.erase(task["key"])
 
 func manage_dynamic_lod_and_offloading(cam_pos: Vector3):
 	for key in loaded_tiles.keys():
@@ -279,6 +349,9 @@ func update_layer_visibilities():
 		var node = loaded_tiles[key]
 		if is_instance_valid(node):
 			node.visible = show_low_res if key.begins_with("z8_") else show_high_res
+			var marker = node.get_node_or_null("DebugMarker")
+			if marker:
+				marker.visible = debug_mode
 
 func evaluate_memory_limits():
 	var cam_pos = camera.global_position

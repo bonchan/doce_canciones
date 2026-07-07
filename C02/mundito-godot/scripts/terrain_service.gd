@@ -4,6 +4,7 @@ extends Node
 # Signal to alert world.gd when a thread finishes processing a tile mesh package
 signal tile_ready(mesh: ArrayMesh, image: Image, task: Dictionary)
 signal tile_failed(task: Dictionary)
+signal tile_cancelled(task: Dictionary)
 
 const CACHE_DIR = "user://terrain_cache_binary/"
 
@@ -57,6 +58,34 @@ func update_view(cam_pos: Vector3, cam_forward: Vector3):
 	pending_queue.sort_custom(func(a, b): return a["priority"] < b["priority"])
 	# Don't call _drain_queue() here on every frame purely for re-sorting;
 	# it's already draining whenever a slot frees up in _pipeline_finished().
+
+# Drops any tile still WAITING in the queue whose world_center is now
+# further than the given distance from cam_pos (separate thresholds for
+# flat/background tiles vs 3D mesh tiles, since they use very different
+# ranges). Never touches a pipeline that has already started -- those
+# threads/downloads run to completion regardless, so nothing already in
+# flight gets interrupted. Fires tile_cancelled for each dropped tile so
+# world.gd can clear its own bookkeeping (e.g. requested_tiles) and allow
+# that tile to be re-requested later if the camera comes back around.
+# Returns how many tiles were dropped, mainly useful for debug logging.
+func prune_stale_queue(cam_pos: Vector3, hq_max_distance: float, lq_max_distance: float) -> int:
+	if pending_queue.is_empty():
+		return 0
+	var kept: Array[Dictionary] = []
+	var removed := 0
+	for t in pending_queue:
+		var max_dist = lq_max_distance if t.get("is_flat", false) else hq_max_distance
+		var too_far = t.has("world_center") and cam_pos.distance_to(t["world_center"]) > max_dist
+		if too_far:
+			removed += 1
+			tile_cancelled.emit(t)
+		else:
+			kept.append(t)
+	pending_queue = kept
+	return removed
+
+func get_queue_size() -> int:
+	return pending_queue.size()
 
 # ----------------------------------------------------------------------
 # PRIORITY SCORING
