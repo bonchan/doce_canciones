@@ -1,0 +1,70 @@
+[gd_scene format=3 uid="uid://dcbvx07y58718"]
+
+[ext_resource type="Script" uid="uid://cagwi3mtn5mde" path="res://world.gd" id="1_rf4cw"]
+[ext_resource type="Script" uid="uid://dg4s178wxs1yx" path="res://scripts/drone_movement.gd" id="2_7dtx0"]
+[ext_resource type="Script" uid="uid://dh885vuwywbjr" path="res://scripts/mqtt_manager.gd" id="2_by2nx"]
+[ext_resource type="Script" uid="uid://jk11vqqs7y0w" path="res://scripts/minimap.gd" id="3_cxftf"]
+[ext_resource type="Script" uid="uid://xqivhv3w3og0" path="res://scripts/telemetry_hud.gd" id="3_rro2w"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_u2lu5"]
+
+[sub_resource type="Sky" id="Sky_6eiey"]
+sky_material = SubResource("ProceduralSkyMaterial_u2lu5")
+
+[sub_resource type="Environment" id="Environment_iw5cg"]
+background_mode = 2
+sky = SubResource("Sky_6eiey")
+
+[node name="World" type="Node3D" unique_id=2101533113]
+script = ExtResource("1_rf4cw")
+
+[node name="MQTT" type="Node" parent="." unique_id=978098888]
+script = ExtResource("2_by2nx")
+mqtt_enabled = true
+
+[node name="TerrainContainer" type="Node3D" parent="." unique_id=509709928]
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=897146483]
+transform = Transform3D(1, 0, 0, 0, 0.92718387, 0.37460658, 0, -0.37460658, 0.92718387, 0, 400, 0)
+far = 50000.0
+script = ExtResource("2_7dtx0")
+
+[node name="RayCast3D" type="RayCast3D" parent="Camera3D" unique_id=926405117]
+target_position = Vector3(0, -500, 0)
+
+[node name="HTTPDataRequest" type="HTTPRequest" parent="." unique_id=2014439902]
+
+[node name="HTTPImageRequest" type="HTTPRequest" parent="." unique_id=1849801966]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1569547977]
+transform = Transform3D(0.70710677, 0.49999997, -0.49999997, 0, 0.70710677, 0.70710677, 0.70710677, -0.49999997, 0.49999997, 0, 100, 0)
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1526327821]
+environment = SubResource("Environment_iw5cg")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1327895190]
+
+[node name="Label" type="Label" parent="CanvasLayer" unique_id=1777086654]
+offset_right = 40.0
+offset_bottom = 23.0
+text = "Telemetry Loading..."
+script = ExtResource("3_rro2w")
+
+[node name="MinimapContainer" type="SubViewportContainer" parent="CanvasLayer" unique_id=1474149032]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -262.0
+offset_top = 8.0
+offset_right = -6.0
+offset_bottom = 264.0
+grow_horizontal = 0
+
+[node name="MinimapViewport" type="SubViewport" parent="CanvasLayer/MinimapContainer" unique_id=1690627362]
+handle_input_locally = false
+size = Vector2i(256, 256)
+render_target_update_mode = 4
+
+[node name="MinimapCamera" type="Camera3D" parent="CanvasLayer/MinimapContainer/MinimapViewport" unique_id=456194888]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 14, 0)
+script = ExtResource("3_cxftf")

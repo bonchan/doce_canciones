@@ -1,0 +1,8 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://bkhi2kq7b1t0e"]
+
+[ext_resource type="Shader" uid="uid://cfirkn5ur3ejs" path="res://shaders/new_shader_material.gdshader" id="1_vo683"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_vo683")
+shader_parameter/curvature = 2e-05
