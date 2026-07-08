@@ -9,15 +9,32 @@ var client: Node
 
 # Using a standard, free public broker with the TCP protocol prefix
 @export var mqtt_enabled: bool = false
-@export var broker_url: String = "tcp://nuc.local:1883"
-@export var username: String = "esp32user"
-@export var password: String = "1q2w3e4r5t6y"
-@export var client_id: String = "godot_json_receiver_2026"
-@export var topic: String = "display/telemetry/70daec65d8a5a099"
+
+var broker_url: String = "tcp://broker.hivemq.com:1883"
+var client_id: String = "godot_fallback_client"
+var topic: String = "display/telemetry/DEVICE_ID"
 
 func _ready():
 	if !mqtt_enabled:
 		print("MQTT Disabled")
+		return
+		
+	var config = ConfigFile.new()
+	var error = config.load("res://config.cfg")
+	
+	var username = ""
+	var password = ""
+	
+	if error == OK:
+		# Extract variables safely (Using defaults if a specific key is missing)
+		broker_url = config.get_value("mqtt", "broker_url", broker_url)
+		client_id = config.get_value("mqtt", "client_id", client_id)
+		username = config.get_value("mqtt", "username", "")
+		password = config.get_value("mqtt", "password", "")
+		topic = config.get_value("mqtt", "topic", "")
+		print("MQTT Config successfully loaded from disk.")
+	else:
+		print("Warning: Could not load config.cfg (Error code: ", error, "). Using default fallback values.")
 		return
 		
 	# 1. Instantiate the script as a node and add it to the scene tree
@@ -47,7 +64,7 @@ func _on_mqtt_failed():
 func _on_mqtt_message_received(topic: String, message: String):
 	# Filter incoming messages for your target pathway
 	#TODO change this
-	if topic == "display/telemetry/70daec65d8a5a099":
+	if topic == topic:
 		parse_telemetry_payload(message)
 
 
