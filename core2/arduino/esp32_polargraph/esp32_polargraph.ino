@@ -2,7 +2,7 @@
 // e.g. "sensor.ldr", "actuator.speaker"
 #define DEVICE_TYPE "polargraph"
 #define SCRIPT_NAME "esp32_polargraph"
-#define CAPS_PUBLISHES "[\"x\", \"y\", \"queue_len\", \"queue_clears\", \"servo_write\"]"
+#define CAPS_PUBLISHES "[\"x\", \"y\", \"left_distance_to_go\", \"right_distance_to_go\", \"queue_len\", \"queue_clears\", \"servo_write\"]"
 // + any custom capabilities you add below
 #define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\",\"HOME\",\"ZERO\",\"HALT\",\"WIND\",\"MOVE_ABS\",\"MOVE_REL\",\"SERVO_SET\",\"CAL\",\"QUEUE_ADD\"]"
 
@@ -346,6 +346,14 @@ void loop() {
   }
 
   JsonDocument doc;
+  // The backend's drawing-job orchestrator (drawing.py's _stopped()) needs
+  // these to detect true arrival — queue_len==0 alone doesn't mean the
+  // last point has been physically reached yet, only that it's no longer
+  // queued. Without these two fields, _stopped() can never return true, so
+  // neither the solar path job nor the text job can ever detect
+  // completion — they just poll until the stall timeout fires and error out.
+  doc["left_distance_to_go"] = left.distanceToGo();
+  doc["right_distance_to_go"] = right.distanceToGo();
   doc["queue_len"] = queueLen;
   doc["queue_clears"] = queueClearCount;
   doc["servo_write"] = servoPos == servoWrite;
