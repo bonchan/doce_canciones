@@ -1,0 +1,13 @@
+{
+  "rules": {
+    ".read": true,
+    ".write": "auth != null",
+    "device_history": {
+      "$device_id": {
+        "events": {
+          ".indexOn": "ts"
+        }
+      }
+    }
+  }
+}

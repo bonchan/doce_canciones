@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Device Network Telemetry Matrix</title>
+
+  <script defer src="/__/firebase/12.14.0/firebase-app-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-auth-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-database-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-firestore-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-functions-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-messaging-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-storage-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-analytics-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-remote-config-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-performance-compat.js"></script>
+
+  <script defer src="/__/firebase/init.js?useEmulator=false"></script>
+
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Telemetry Dashboard</h1>
+      </div>
+      <div class="sync-time" style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+        <div>Last Sync: <span id="sync-timestamp">Connecting...</span></div>
+        <div style="font-size: 12px; color: #38bdf8; font-family: monospace;" id="sync-counter"></div>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="home">Home</button>
+      <button class="tab-btn" data-tab="timeline">Timeline</button>
+    </nav>
+
+    <section id="tab-home" class="tab-panel active">
+      <h1>Devices</h1>
+      <main class="device-grid" id="devices-container">
+        <div class="empty-state">Waiting for data payload from Firebase...</div>
+      </main>
+    </section>
+
+    <section id="tab-timeline" class="tab-panel">
+      <h1>Timeline</h1>
+      <div class="range-bar">
+        <button class="range-btn active" data-range="1h">Past hour</button>
+        <button class="range-btn" data-range="24h">Past day</button>
+        <button class="range-btn" data-range="7d">Past 7 days</button>
+        <button class="range-btn" data-range="30d">Past month</button>
+        <button class="range-btn" data-range="all">All</button>
+      </div>
+      <div class="timeline-legend">
+        <span><i class="legend-dot legend-online"></i> Online</span>
+        <span><i class="legend-dot legend-offline"></i> Offline</span>
+        <span><i class="legend-dot legend-unknown"></i> No data</span>
+      </div>
+      <div id="timeline-container">
+        <div class="empty-state">Loading timeline...</div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+
+    function formatHumanReadable(totalSeconds) {
+      if (totalSeconds === 0) return "0 seconds";
+
+      let remainder = totalSeconds;
+
+      // 1 year = 365 days * 24 * 60 * 60 = 31,536,000 seconds
+      const y = Math.floor(remainder / 31536000);
+      remainder %= 31536000;
+
+      // 1 month average = 30.44 days * 24 * 60 * 60 = 2,630,016 seconds
+      const mo = Math.floor(remainder / 2630016);
+      remainder %= 2630016;
+
+      // 1 day = 86,400 seconds
+      const d = Math.floor(remainder / 86400);
+      remainder %= 86400;
+
+      // 1 hour = 3,600 seconds
+      const h = Math.floor(remainder / 3600);
+      remainder %= 3600;
+
+      // 1 minute = 60 seconds
+      const m = Math.floor(remainder / 60);
+      const s = remainder % 60;
+
+      const parts = [];
+
+      if (y > 0) parts.push(y === 1 ? "1 year" : `${y} years`);
+      if (mo > 0) parts.push(mo === 1 ? "1 month" : `${mo} months`);
+      if (d > 0) parts.push(d === 1 ? "1 day" : `${d} days`);
+      if (h > 0) parts.push(h === 1 ? "1 hour" : `${h} hours`);
+      if (m > 0) parts.push(m === 1 ? "1 minute" : `${m} minutes`);
+      if (s > 0) parts.push(s === 1 ? "1 second" : `${s} seconds`);
+
+      return parts.join(", ");
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      const syncTimeEl = document.getElementById("sync-timestamp");
+      const devicesContainerEl = document.getElementById("devices-container");
+
+      // ── SELECT THE NEW COUNTER DOM NODE ──
+      const syncCounterEl = document.getElementById("sync-counter");
+
+      // ── TABS ──────────────────────────────────────────────────────────
+      const tabButtons = document.querySelectorAll(".tab-btn");
+      tabButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          tabButtons.forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          document.querySelectorAll(".tab-panel").forEach((panel) => {
+            panel.classList.toggle("active", panel.id === `tab-${btn.dataset.tab}`);
+          });
+          if (btn.dataset.tab === "timeline") loadTimeline();
+        });
+      });
+
+      // Track the last sync timestamp globally inside the event loop closure
+      let lastSyncDate = null;
+      let intervalSeconds = null;
+
+      try {
+        const database = firebase.database();
+        const snapshotRef = database.ref('device_snapshot');
+
+        snapshotRef.on('value', (snapshot) => {
+          const payload = snapshot.val();
+
+          if (!payload) {
+            devicesContainerEl.innerHTML = `<div class="empty-state">No device snapshots found in database tree.</div>`;
+            syncTimeEl.innerText = "Never";
+            syncCounterEl.innerText = "";
+            return;
+          }
+
+          if (payload.last_sync) {
+            let utcString = payload.last_sync;
+            if (!utcString.endsWith('Z')) {
+              utcString += 'Z';
+            }
+            lastSyncDate = new Date(utcString);
+            syncTimeEl.innerText = lastSyncDate.toLocaleTimeString();
+            syncCounterEl.innerText = `Refresh in ${intervalSeconds} seconds`;
+          }
+
+          if (payload.interval_seconds) {
+            intervalSeconds = payload.interval_seconds
+          }
+
+          devicesContainerEl.innerHTML = "";
+
+          const devices = payload.devices || {};
+          // Sort by type, then online-first, so the grid groups sensibly
+          // without hardcoding a fixed set of device types.
+          const deviceIds = Object.keys(devices).sort((a, b) => {
+            const typeA = (devices[a].type || "").toLowerCase();
+            const typeB = (devices[b].type || "").toLowerCase();
+            if (typeA !== typeB) return typeA < typeB ? -1 : 1;
+            return (devices[b].online ? 1 : 0) - (devices[a].online ? 1 : 0);
+          });
+
+          if (deviceIds.length === 0) {
+            devicesContainerEl.innerHTML = `<div class="empty-state">No devices currently reporting sync nodes.</div>`;
+            return;
+          }
+
+          deviceIds.forEach(deviceId => {
+            const deviceData = devices[deviceId];
+            const isOnline = deviceData.online === true;
+            const statusClass = isOnline ? 'status-online' : 'status-offline';
+            const statusText = isOnline ? 'Online' : 'Offline';
+
+            const card = document.createElement("div");
+            card.className = "device-card";
+
+            let telemetryHtml = `
+              <div class="telemetry-row">
+                  <span class="telemetry-label">zone:</span>
+                  <span class="telemetry-value">${deviceData.zone ?? '-'}</span>
+              </div>
+              <div class="telemetry-row">
+                  <span class="telemetry-label">fw:</span>
+                  <span class="telemetry-value">${deviceData.fw ?? '-'}</span>
+              </div>
+            `;
+
+            const telemetry = deviceData.telemetry || {};
+            Object.keys(telemetry).forEach(key => {
+              const val = typeof telemetry[key] === 'object'
+                ? JSON.stringify(telemetry[key])
+                : telemetry[key];
+
+              telemetryHtml += `
+                <div class="telemetry-row">
+                    <span class="telemetry-label">${key}:</span>
+                    <span class="telemetry-value">${val}</span>
+                </div>
+              `;
+            });
+
+            card.innerHTML = `
+              <div class="device-header">
+                  <span class="chip-id">${deviceData.type || 'unknown'} — ${deviceId}</span>
+                  <span class="status-badge ${statusClass}">${statusText}</span>
+              </div>
+              <div class="device-body">
+                  ${telemetryHtml}
+              </div>
+            `;
+
+            devicesContainerEl.appendChild(card);
+          });
+        }, (error) => {
+          console.error("Firebase database read error execution trap:", error);
+          syncTimeEl.innerText = "Read Error";
+        });
+
+        // ── LIVE TICKING COUNTER ENGINE ──────────────────────────────────────
+        // Fires every 1000 milliseconds to calculate delta time on the interface
+        setInterval(() => {
+          if (!lastSyncDate) return;
+
+          const now = new Date();
+          const secondsElapsed = Math.floor((now - lastSyncDate) / 1000);
+          const cleanSeconds = Math.max(0, secondsElapsed);
+
+          const delta = intervalSeconds - cleanSeconds;
+
+          if (delta >= 0) {
+            // 1. Keeps your original bright blue (#38bdf8) while things are online
+            syncCounterEl.style.color = "#38bdf8";
+            syncCounterEl.innerText = `Refresh in ${delta} seconds`;
+          } else {
+            // 2. Swaps it to a bright red (#ef4444) the exact second it goes offline
+            syncCounterEl.style.color = "#ef4444";
+            const absoluteSeconds = Math.abs(delta);
+            syncCounterEl.innerText = `Offline for ${formatHumanReadable(absoluteSeconds)}`;
+          }
+        }, 1000);
+
+      } catch (e) {
+        console.error("Initialization Error:", e);
+        syncTimeEl.innerText = "SDK Error";
+      }
+
+      // ── TIMELINE ──────────────────────────────────────────────────────
+      const RANGE_MS = {
+        "1h": 60 * 60 * 1000,
+        "24h": 24 * 60 * 60 * 1000,
+        "7d": 7 * 24 * 60 * 60 * 1000,
+        "30d": 30 * 24 * 60 * 60 * 1000,
+        "all": null,
+      };
+
+      const timelineContainerEl = document.getElementById("timeline-container");
+      const rangeButtons = document.querySelectorAll(".range-btn");
+      let currentRange = "1h";
+
+      rangeButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          rangeButtons.forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          currentRange = btn.dataset.range;
+          loadTimeline();
+        });
+      });
+
+      // For a device with events, figures out the on/off segments covering
+      // [windowStart, windowEnd] from a sorted list of {ts, online} events
+      // plus whatever the state was immediately before the window opened
+      // (null if that's unknown, e.g. the "all" range or a brand new device).
+      function buildSegments(events, windowStart, windowEnd, initialOnline) {
+        const segments = [];
+        let cursor = windowStart;
+        let state = initialOnline;
+        events.forEach((ev) => {
+          segments.push({ start: cursor, end: ev.ts, online: state });
+          cursor = ev.ts;
+          state = ev.online;
+        });
+        segments.push({ start: cursor, end: windowEnd, online: state });
+        return segments;
+      }
+
+      function renderDeviceTrack(deviceId, meta, segments, windowStart, windowEnd) {
+        const span = Math.max(1, windowEnd - windowStart);
+        const segmentsHtml = segments
+          .map((seg) => {
+            const leftPct = ((seg.start - windowStart) / span) * 100;
+            const widthPct = ((seg.end - seg.start) / span) * 100;
+            const cls = seg.online === null ? "seg-unknown" : seg.online ? "seg-online" : "seg-offline";
+            return `<div class="timeline-seg ${cls}" style="left:${leftPct}%;width:${widthPct}%;"></div>`;
+          })
+          .join("");
+
+        const label = `${(meta && meta.type) || "unknown"} — ${deviceId}${meta && meta.zone ? ` (${meta.zone})` : ""}`;
+
+        const row = document.createElement("div");
+        row.className = "timeline-row";
+        row.innerHTML = `
+          <div class="timeline-label">${label}</div>
+          <div class="timeline-track">${segmentsHtml}</div>
+        `;
+        return row;
+      }
+
+      async function loadTimeline() {
+        timelineContainerEl.innerHTML = `<div class="empty-state">Loading timeline...</div>`;
+
+        try {
+          const database = firebase.database();
+          const historyRef = database.ref("device_history");
+          const historySnap = await historyRef.once("value");
+          const history = historySnap.val() || {};
+          const deviceIds = Object.keys(history);
+
+          if (deviceIds.length === 0) {
+            timelineContainerEl.innerHTML = `<div class="empty-state">No status history recorded yet.</div>`;
+            return;
+          }
+
+          const windowEnd = Date.now();
+          const rangeMs = RANGE_MS[currentRange];
+          const windowStart = rangeMs ? windowEnd - rangeMs : 0;
+
+          timelineContainerEl.innerHTML = "";
+
+          const rangeStartLabel = document.createElement("div");
+          rangeStartLabel.className = "timeline-axis";
+          rangeStartLabel.innerHTML = `<span>${rangeMs ? new Date(windowStart).toLocaleString() : "beginning"}</span><span>now</span>`;
+          timelineContainerEl.appendChild(rangeStartLabel);
+
+          for (const deviceId of deviceIds) {
+            const eventsRef = database.ref(`device_history/${deviceId}/events`);
+
+            // Last known state at/before the window start, to seed the left
+            // edge of the track (skipped for "all" — nothing precedes it).
+            let initialOnline = null;
+            if (rangeMs) {
+              const beforeSnap = await eventsRef.orderByChild("ts").endAt(windowStart).limitToLast(1).once("value");
+              beforeSnap.forEach((child) => {
+                initialOnline = child.val().online;
+              });
+            }
+
+            // Events inside the window itself.
+            const withinSnap = await eventsRef.orderByChild("ts").startAt(windowStart).once("value");
+            const events = [];
+            withinSnap.forEach((child) => {
+              events.push(child.val());
+            });
+            events.sort((a, b) => a.ts - b.ts);
+
+            const segments = buildSegments(events, windowStart, windowEnd, initialOnline);
+            const meta = (history[deviceId] && history[deviceId].meta) || {};
+            timelineContainerEl.appendChild(renderDeviceTrack(deviceId, meta, segments, windowStart, windowEnd));
+          }
+        } catch (e) {
+          console.error("Timeline load error:", e);
+          timelineContainerEl.innerHTML = `<div class="empty-state">Failed to load timeline.</div>`;
+        }
+      }
+    });
+  </script>
+</body>
+
+</html>
