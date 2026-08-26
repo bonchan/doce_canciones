@@ -1,0 +1,28 @@
+# ── topic schema ──────────────────────────────────────────────────────────
+# installation/<zone>/<device_id>/status     retained, LWT   -> "online" | "offline"
+# installation/<zone>/<device_id>/announce   retained        -> {type, capabilities, fw}
+# installation/<zone>/<device_id>/telemetry                  -> {...}
+# installation/<zone>/<device_id>/cmd/<capability>           <- backend publishes, device subscribes
+# installation/broadcast/<type>/cmd/<capability>              <- backend publishes, all devices of a type subscribe
+
+TOPIC_STATUS_WILD    = "installation/+/+/status"
+TOPIC_ANNOUNCE_WILD  = "installation/+/+/announce"
+TOPIC_TELEMETRY_WILD = "installation/+/+/telemetry"
+
+
+def cmd_topic(zone: str, device_id: str, capability: str) -> str:
+    return f"installation/{zone}/{device_id}/cmd/{capability}"
+
+
+def broadcast_topic(device_type: str, capability: str) -> str:
+    return f"installation/broadcast/{device_type}/cmd/{capability}"
+
+
+def parse_topic(topic: str):
+    """Returns (zone, device_id, kind) for a status/announce/telemetry topic,
+    or None if the topic doesn't match the expected 4-part shape."""
+    parts = topic.split("/")
+    if len(parts) != 4:
+        return None
+    _, zone, device_id, kind = parts
+    return zone, device_id, kind
