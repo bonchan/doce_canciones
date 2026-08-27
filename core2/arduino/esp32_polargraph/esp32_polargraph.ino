@@ -21,6 +21,11 @@ const long STEPS_PER_REV = 4096;
 AccelStepper left(AccelStepper::HALF4WIRE, 32, 25, 33, 26);
 AccelStepper right(AccelStepper::HALF4WIRE, 19, 5, 18, 17);
 
+// End Stops
+const int LEFT_ENDSTOP_PIN = 27;
+const int RIGHT_ENDSTOP_PIN = 16;
+
+
 // Servo
 const int SERVO_PIN = 13;
 const int SERVO_SLOW_APPROACH = 90;
@@ -312,6 +317,9 @@ void setup() {
 
   loadStepsPerMm();
 
+  pinMode(LEFT_ENDSTOP_PIN, INPUT_PULLUP);
+  pinMode(RIGHT_ENDSTOP_PIN, INPUT_PULLUP);
+
   syncMotors();
   Serial.println("System Ready (ESP32).");
   Serial.println("Not zeroed yet. Jog to the reference point (top-middle) and send ZERO.");
@@ -328,6 +336,14 @@ void loop() {
   // they got there (path-following, WIND jogging, or anything else) — see
   // updateCurrentPosition() below for why this matters.
   updateCurrentPosition();
+
+  bool lEnd = digitalRead(LEFT_ENDSTOP_PIN) == HIGH;
+  bool rEnd = digitalRead(RIGHT_ENDSTOP_PIN) == HIGH;
+
+  Serial.print("L endstop: ");
+  Serial.print(lEnd ? "TRIGGERED" : "         ");
+  Serial.print("  R endstop: ");
+  Serial.println(rEnd ? "TRIGGERED" : "         ");
 
   tickNetwork();
   tickCommands();
