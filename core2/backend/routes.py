@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 import broker
 import drawing
+import text_path
 from broker import registry
 
 load_dotenv()
@@ -59,6 +60,24 @@ async def draw_solar_path(device_id: str, scale: float = 1.0, date: Optional[str
 @router.post("/api/devices/{device_id}/draw/cancel", dependencies=[Depends(require_api_key)])
 async def cancel_draw(device_id: str):
     drawing.cancel_job(device_id)
+    return {"status": "ok"}
+
+
+@router.post("/api/devices/{device_id}/draw/text", dependencies=[Depends(require_api_key)])
+async def draw_text(
+    device_id: str,
+    text: str,
+    letter_height_mm: float = text_path.DEFAULT_LETTER_HEIGHT_MM,
+    font: str = text_path.DEFAULT_FONT,
+):
+    # async on purpose — same reason as draw_solar_path (schedules a
+    # background asyncio task on the event loop's own thread).
+    # Starts wherever the gondola currently is, not a fixed frame — see
+    # drawing.start_text_job / text_path.py.
+    try:
+        await drawing.start_text_job(device_id, text, letter_height_mm=letter_height_mm, font=font)
+    except drawing.DrawingError as e:
+        raise HTTPException(409, str(e))
     return {"status": "ok"}
 
 

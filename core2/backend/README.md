@@ -9,6 +9,7 @@ dashboard.
 - `routes.py` — REST endpoints, websocket, the `X-API-Key` check
 - `firebase_pusher.py` — mirrors the registry to Firebase Realtime Database on an interval, for viewing installation status from outside the gallery
 - `solar_path.py` — computes today's sun path (pvlib) and maps it to a polargraph's physical mm coordinates, for the "draw solar line" feature
+- `text_path.py` — converts arbitrary text into pen strokes (Hershey single-stroke plotter fonts) in a polargraph's physical mm coordinates, anchored to wherever the gondola currently is, for the "write text" feature
 - `drawing.py` — orchestrates multi-point drawings on a polargraph: batches points to the device's onboard queue (see `esp32_polargraph.ino`'s `QUEUE_ADD`/`queue_len`), refills on a low-water mark, tracks progress from `sent - queue_len` (points the firmware has actually popped, not proximity guessing), and exposes job state (`dev["job"]`) over the existing `/ws/state` websocket
 - `main.py` — app assembly: creates the FastAPI app, wires up `routes.py`, and owns startup/shutdown (including the MQTT connect-retry loop and the Firebase pusher)
 
@@ -180,11 +181,33 @@ long. This matters because consecutive solar-path points can be far apart
 near sunrise/sunset, so a single leg can legitimately take longer than the
 old point-to-point-only progress check assumed.
 
+`POST /api/devices/{device_id}/draw/text` writes arbitrary text starting
+wherever the gondola currently is (its live `x`/`y` telemetry at the moment
+the job starts), rather than a fixed frame like the solar path — see
+`text_path.py`. Query params: `text` (required), `letter_height_mm`
+(default 30), `font` (default `"cursive"`, any name from the
+`Hershey-Fonts` package's built-in set — an unknown font name comes back as
+a 409). No attempt is made to keep the text within the polargraph's
+physical working rectangle; long text starting near an edge can run past
+it, deliberately unhandled for now.
+
+Internally this reuses `_run_job()` — the same function the solar path
+uses. `text_path.py` groups the text into strokes (a Hershey glyph's own
+connected segments, or several joined letters in a cursive font), but
+`start_text_job()` flattens all of them into one continuous point list
+before handing it off, so the whole thing is streamed and drawn as a
+single unbroken pen-down line: the pen never lifts between letters or
+words. (An earlier version traveled pen-up between strokes via a separate
+`MOVE_ABS`, structured as its own `_run_text_job()` — that left visible
+gaps and added pen-lift wear, and was replaced with this simpler
+single-line approach.) Job state uses `"kind": "text"` with a flattened
+`"points"` array — same `sent`/`reached` contract as the solar path, so
+the frontend's progress coloring works unmodified.
+
 ## Known gaps / not yet implemented
 
 - No persistence — the registry is in-memory only, a restart forgets every
   device until it re-announces.
-- Only one kind of drawing job exists (solar path) and only one at a time
-  per device — `drawing.py` is written generically enough (points list in,
-  batched to the device's queue) that adding another source of points later
-  shouldn't need much beyond a new REST endpoint.
+- Two kinds of drawing job exist (solar path, text), both streamed through
+  the same `_run_job()`, and only one at a time per device, across either
+  kind.

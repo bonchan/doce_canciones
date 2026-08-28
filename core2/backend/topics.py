@@ -2,12 +2,14 @@
 # installation/<zone>/<device_id>/status     retained, LWT   -> "online" | "offline"
 # installation/<zone>/<device_id>/announce   retained        -> {type, capabilities, fw}
 # installation/<zone>/<device_id>/telemetry                  -> {...}
+# installation/<zone>/<device_id>/config     retained        -> {...}  (currently-set config, per device — not every device publishes this)
 # installation/<zone>/<device_id>/cmd/<capability>           <- backend publishes, device subscribes
 # installation/broadcast/<type>/cmd/<capability>              <- backend publishes, all devices of a type subscribe
 
 TOPIC_STATUS_WILD    = "installation/+/+/status"
 TOPIC_ANNOUNCE_WILD  = "installation/+/+/announce"
 TOPIC_TELEMETRY_WILD = "installation/+/+/telemetry"
+TOPIC_CONFIG_WILD    = "installation/+/+/config"
 
 
 def cmd_topic(zone: str, device_id: str, capability: str) -> str:

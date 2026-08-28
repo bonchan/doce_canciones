@@ -1,6 +1,17 @@
-"""Orchestrates multi-point drawings (currently just the solar path) on a
-polargraph, using the on-device point queue added in esp32_polargraph.ino
-(QUEUE_ADD / queue_len).
+"""Orchestrates multi-point drawings — both the solar path and arbitrary
+text — on a polargraph, using the on-device point queue added in
+esp32_polargraph.ino (QUEUE_ADD / queue_len).
+
+Both drawing kinds go through the same _run_job(): a solar path is already
+a single flat point list, and start_text_job() flattens a text's strokes
+(see text_path.py) into one flat point list before handing it to _run_job
+too — so both are streamed to the device as one continuous pen-down line,
+the pen never lifting mid-job. An earlier version of the text job traveled
+pen-up between strokes via a separate MOVE_ABS between each one
+(_run_text_job, since removed) — that produced visible gaps and pen-lift
+wear between letters, and added a whole extra class of interruption-timing
+races (see git history if you need the details); connecting strokes with a
+straight drawn line instead is simpler and is what was actually wanted.
 
 Why this lives in the backend rather than just handing the device the whole
 point list up front: the backend holds the full, authoritative path and a
@@ -58,6 +69,7 @@ import broker
 from broker import registry
 from logger import logger
 import solar_path
+import text_path
 
 BATCH_SIZE = 10          # points per QUEUE_ADD — comfortably under the MQTT payload budget
 LOW_WATER = 3             # refill once the on-device queue drops to this many points
@@ -72,6 +84,43 @@ _active_jobs: dict[str, asyncio.Task] = {}
 
 class DrawingError(Exception):
     pass
+
+
+def _stopped(telemetry: dict) -> bool:
+    """True once both motors report ~0 distance-to-go — used anywhere
+    "has the gondola actually arrived" matters (final drawing completion),
+    rather than inferring it from position proximity (see module docstring
+    for why that broke down for closely-spaced points)."""
+    left_dtg = telemetry.get("left_distance_to_go")
+    right_dtg = telemetry.get("right_distance_to_go")
+    return (
+        left_dtg is not None and abs(left_dtg) <= STOP_TOLERANCE_STEPS
+        and right_dtg is not None and abs(right_dtg) <= STOP_TOLERANCE_STEPS
+    )
+
+
+async def _establish_baseline_clears(device_id: str, dev: dict, pre_clears):
+    """Waits for a just-sent HALT/MOVE_ABS's queue_clears bump to actually
+    land in telemetry (bounded by a timeout) before returning a safe
+    baseline for external-interruption detection from this point forward.
+    A fixed delay isn't safe here — MQTT/WiFi round-trip time varies, and
+    establishing the baseline before our own bump has arrived makes a job
+    mistake its own command for an external interruption and cancel itself
+    immediately (this is what made the red line disappear right at the
+    start of a drawing, before this was fixed). Returns (dev, baseline)."""
+    if pre_clears is not None:
+        confirm_deadline = time.monotonic() + 5.0
+        while time.monotonic() < confirm_deadline:
+            dev = registry.devices.get(device_id) or dev
+            current = (dev.get("telemetry") or {}).get("queue_clears")
+            if current is not None and current > pre_clears:
+                break
+            await asyncio.sleep(0.15)
+        else:
+            logger.info(f"[drawing] {device_id} pre-job clear wasn't confirmed within 5s — proceeding anyway")
+    dev = registry.devices.get(device_id) or dev
+    baseline = (dev.get("telemetry") or {}).get("queue_clears")
+    return dev, baseline
 
 
 async def start_solar_path_job(device_id: str, scale: float = 1.0, date: str | None = None):
@@ -170,49 +219,26 @@ def cancel_job(device_id: str):
         pass
 
 
-async def _run_job(device_id: str, points: list[tuple[float, float]], pre_halt_clears=None):
+async def _run_job(device_id: str, points: list[tuple[float, float]], pre_halt_clears=None, kind="solar_path"):
+    """Streams a single flat point list to the device as one continuous
+    pen-down line — used directly by both start_solar_path_job (obviously)
+    and start_text_job (which flattens all of a text's strokes into one
+    list before calling this, so consecutive letters/words get connected
+    by a straight line rather than a pen-up travel between them — see
+    start_text_job for why that's the right behavior here, not a
+    simplification)."""
     total = len(points)
     dev = registry.devices[device_id]
 
-    # start_solar_path_job sent a pre-job HALT to clear any stale queue
-    # before this job sends a single point (see there). That HALT bumps
-    # the device's queue_clears counter, same as any other HALT — and this
-    # job's own external-interruption check below (comparing queue_clears
-    # against a baseline) can't tell that bump apart from someone else
-    # hitting HALT mid-drawing unless we establish the baseline *after*
-    # it's landed.
-    #
-    # A fixed delay here isn't safe — MQTT/WiFi round-trip time varies, and
-    # a delay too short for the actual round trip means the baseline gets
-    # captured with the OLD (pre-HALT) count, so the confirmation arrives
-    # a moment later looking exactly like an external interruption: the job
-    # cancels itself immediately, which is what "the red line disappears
-    # right away" was. So actually wait for confirmation instead of hoping
-    # a guessed delay was long enough, bounded so a device that doesn't
-    # have this telemetry field yet (or is having connectivity trouble)
-    # doesn't hang the job forever.
-    if pre_halt_clears is not None:
-        confirm_deadline = time.monotonic() + 5.0
-        while time.monotonic() < confirm_deadline:
-            dev = registry.devices.get(device_id) or dev
-            current = (dev.get("telemetry") or {}).get("queue_clears")
-            if current is not None and current > pre_halt_clears:
-                break
-            await asyncio.sleep(0.15)
-        else:
-            logger.info(f"[drawing] {device_id} pre-job HALT wasn't confirmed within 5s — proceeding anyway")
-
-    dev = registry.devices.get(device_id) or dev
-
-    # Baseline for detecting an external interruption below — only care
-    # about this counter increasing *during* this job, not its absolute
-    # value (which may already be nonzero from something that happened
-    # long before this job started, including the pre-job HALT just
-    # confirmed above).
-    baseline_clears = (dev.get("telemetry") or {}).get("queue_clears")
+    # start_solar_path_job / start_text_job both send a pre-job HALT to
+    # clear any stale queue before this job sends a single point — see
+    # _establish_baseline_clears for why the baseline has to wait for that
+    # HALT's own queue_clears bump to land in telemetry rather than being
+    # captured immediately.
+    dev, baseline_clears = await _establish_baseline_clears(device_id, dev, pre_halt_clears)
 
     dev["job"] = {
-        "kind": "solar_path",
+        "kind": kind,
         "points": points,
         "sent": 0,
         "reached": 0,
@@ -283,12 +309,7 @@ async def _run_job(device_id: str, points: list[tuple[float, float]], pre_halt_c
             # True completion needs more than "queue empty" — the last
             # popped point might still be in flight. Require the motors to
             # have actually stopped too.
-            left_dtg, right_dtg = dtg
-            stopped = (
-                left_dtg is not None and abs(left_dtg) <= STOP_TOLERANCE_STEPS
-                and right_dtg is not None and abs(right_dtg) <= STOP_TOLERANCE_STEPS
-            )
-            if sent >= total and queue_len == 0 and stopped:
+            if sent >= total and queue_len == 0 and _stopped(telemetry):
                 reached = total
                 finished = True
 
@@ -324,3 +345,66 @@ async def _run_job(device_id: str, points: list[tuple[float, float]], pre_halt_c
             dev["job"] = None
         await registry.broadcast()
         _active_jobs.pop(device_id, None)
+
+
+async def start_text_job(
+    device_id: str,
+    text: str,
+    letter_height_mm: float = text_path.DEFAULT_LETTER_HEIGHT_MM,
+    font: str = text_path.DEFAULT_FONT,
+):
+    """Validates preconditions and kicks off a text-writing job. Unlike
+    start_solar_path_job, there's no fixed frame — the text is anchored to
+    wherever the gondola's live telemetry position already is, so "start
+    wherever the gondola is" is literally just reading current x/y and
+    handing it to text_path.text_to_strokes_mm(). Same DrawingError /
+    event-loop-thread rules as start_solar_path_job."""
+    if not text or not text.strip():
+        raise DrawingError("text must not be empty")
+    if letter_height_mm <= 0:
+        raise DrawingError("letter_height_mm must be > 0")
+
+    dev = registry.devices.get(device_id)
+    if not dev:
+        raise DrawingError(f"unknown device {device_id}")
+    if not dev.get("online"):
+        raise DrawingError(f"{device_id} is offline")
+
+    telemetry = dev.get("telemetry", {})
+    start_x, start_y = telemetry.get("x"), telemetry.get("y")
+    if start_x is None or start_y is None:
+        raise DrawingError(f"{device_id} hasn't been zeroed yet — send SET HOME first")
+
+    existing = _active_jobs.get(device_id)
+    if existing and not existing.done():
+        raise DrawingError(f"{device_id} already has a drawing in progress")
+
+    try:
+        strokes = text_path.text_to_strokes_mm(
+            text, start_x, start_y, letter_height_mm=letter_height_mm, font=font
+        )
+    except ValueError as e:
+        raise DrawingError(f"bad text/font: {e}")
+    if not strokes:
+        raise DrawingError("nothing to draw for that text")
+
+    # Same reasoning as start_solar_path_job: force a clean slate before
+    # this job's first point, so a job this backend process has otherwise
+    # forgotten about can't interleave with this one.
+    # Flatten every stroke into one continuous point list. text_path.py
+    # still groups points into strokes (each Hershey glyph's own connected
+    # segments), but this job no longer treats a stroke boundary as a
+    # pen-up travel — it just draws straight through it via _run_job, the
+    # same single-stream mechanism the solar path uses, so the whole thing
+    # comes out as one unbroken line with the pen never lifting.
+    flat_points = [pt for stroke in strokes for pt in stroke]
+
+    pre_halt_clears = (dev.get("telemetry") or {}).get("queue_clears")
+    try:
+        broker.publish_command(device_id, "HALT", {})
+    except KeyError:
+        pass
+
+    _active_jobs[device_id] = asyncio.create_task(
+        _run_job(device_id, flat_points, pre_halt_clears, kind="text")
+    )

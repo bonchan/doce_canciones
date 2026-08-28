@@ -12,6 +12,7 @@ from topics import (
     TOPIC_STATUS_WILD,
     TOPIC_ANNOUNCE_WILD,
     TOPIC_TELEMETRY_WILD,
+    TOPIC_CONFIG_WILD,
     cmd_topic,
     broadcast_topic,
     parse_topic,
@@ -53,6 +54,7 @@ class Registry:
                 "online": False,
                 "last_seen": None,
                 "telemetry": {},
+                "config": {},
                 "meta": {},
                 "job": None,
             }
@@ -112,6 +114,18 @@ class Registry:
         self._set_online(dev, True)
         dev["last_seen"] = self._seen_ts(retained)
 
+    def on_config(self, zone: str, device_id: str, data: dict, retained: bool = False):
+        # Not every device type publishes this — only ones with configurable
+        # module parameters (currently just esp32C3_organismo, see its
+        # organismo_config.h). The device always sends its *whole* current
+        # config, not a diff, so replacing outright is correct — this isn't
+        # a liveness signal the way telemetry is, so online/last_seen are
+        # untouched here.
+        dev = self._get(device_id, zone)
+        dev["zone"] = zone
+        dev["config"] = data
+        logger.info(f"[config] {device_id} -> {data}")
+
     def enforce_staleness(self):
         """Backup net: if a device has been silent (no status, announce, or
         telemetry) for STALE_TIMEOUT seconds, force it offline even if the
@@ -162,6 +176,8 @@ def _handle(zone: str, device_id: str, kind: str, payload_bytes: bytes, retained
             registry.on_announce(zone, device_id, json.loads(payload_bytes), retained)
         elif kind == "telemetry":
             registry.on_telemetry(zone, device_id, json.loads(payload_bytes), retained)
+        elif kind == "config":
+            registry.on_config(zone, device_id, json.loads(payload_bytes), retained)
         else:
             return
     except Exception as e:
@@ -175,6 +191,7 @@ def _on_connect(c, userdata, flags, reason_code, properties):
     c.subscribe(TOPIC_STATUS_WILD)
     c.subscribe(TOPIC_ANNOUNCE_WILD)
     c.subscribe(TOPIC_TELEMETRY_WILD)
+    c.subscribe(TOPIC_CONFIG_WILD)
 
 
 def _on_message(c, userdata, msg):
