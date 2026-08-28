@@ -106,6 +106,25 @@ export default function useDevices() {
     [apiKey]
   );
 
+  const drawText = useCallback(
+    (deviceId, text, letterHeightMm = 30) => {
+      setError('');
+      const params = new URLSearchParams({ text, letter_height_mm: letterHeightMm });
+      fetch(`${API_BASE}/api/devices/${deviceId}/draw/text?${params}`, {
+        method: 'POST',
+        headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `${res.status} ${res.statusText}`);
+          }
+        })
+        .catch((err) => setError(`Write text on ${deviceId} failed: ${err.message}`));
+    },
+    [apiKey]
+  );
+
   const cancelDrawing = useCallback(
     (deviceId) => {
       setError('');
@@ -117,5 +136,5 @@ export default function useDevices() {
     [apiKey]
   );
 
-  return { devices, wsStatus, apiKey, setApiKey, error, sendCommand, drawSolarPath, cancelDrawing };
+  return { devices, wsStatus, apiKey, setApiKey, error, sendCommand, drawSolarPath, drawText, cancelDrawing };
 }

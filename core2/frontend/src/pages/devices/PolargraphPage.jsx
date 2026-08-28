@@ -13,8 +13,8 @@ const PAD = 24;
 // origin (0,0) and a dot at the firmware's believed current position, jog
 // controls, a single "set home" calibration button, and the generic
 // command panel.
-export default function PolargraphPage({ node, sendCommand, 
-  drawSolarPath, cancelDrawing, error }) {
+export default function PolargraphPage({ node, sendCommand,
+  drawSolarPath, drawText, cancelDrawing, error }) {
   const caps = node.capabilities || { publishes: [], subscribes: [] };
   const canvasRef = useRef(null);
 
@@ -63,6 +63,22 @@ export default function PolargraphPage({ node, sendCommand,
   // toggle's extreme values, the firmware won't clamp it away as long as
   // it's within [servoUp, servoWrite].
   const PEN_CAL_POS = 86;
+
+  // Text to write, starting wherever the gondola currently is (see
+  // drawing.start_text_job / text_path.py) — no textbox-side validation
+  // of where the text will physically land; the backend/firmware clamp
+  // (or don't, per the "assume it's possible" instruction for this
+  // feature) is what actually governs that.
+  const [writeText, setWriteText] = useState('hola');
+
+  // Letter height in mm, sent as-is via drawText's letter_height_mm param
+  // — this is what actually controls the size of the written text on the
+  // canvas. 90 default so it's clearly visible against a 1000-1200mm-tall
+  // working rectangle; text_path.py's own DEFAULT_LETTER_HEIGHT_MM only
+  // applies if this param is omitted entirely, which the button below
+  // never does, so that backend constant isn't really "the" default in
+  // practice — this slider is.
+  const [letterHeight, setLetterHeight] = useState(150);
 
   // Canvas is sized to the real working rectangle (motorDist wide x motorY
   // tall), letterboxed within MAX_DIM so it's never stretched — 1mm is the
@@ -167,6 +183,27 @@ export default function PolargraphPage({ node, sendCommand,
     ctx.arc(cox, coy, 6, 0, Math.PI * 2);
     ctx.fill();
 
+    // endstop indicators — fixed at the top corners rather than mapped
+    // through toPixel/toMm, since these represent switches mounted on the
+    // frame itself, not a point reachable on the drawing surface (there's
+    // no real mm position for them the way there is for origin/position/
+    // target). Left switch drawn top-left, right top-right — if that ends
+    // up visually backwards from the real hardware (same class of mirror
+    // mixup as the axis flip above), just swap which telemetry field feeds
+    // which corner.
+    const leftTriggered = telemetry.left_endstop === true;
+    const rightTriggered = telemetry.right_endstop === true;
+
+    ctx.fillStyle = leftTriggered ? '#facc15' : '#374151';
+    ctx.beginPath();
+    ctx.arc(PAD, PAD, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = rightTriggered ? '#facc15' : '#374151';
+    ctx.beginPath();
+    ctx.arc(width - PAD, PAD, 5, 0, Math.PI * 2);
+    ctx.fill();
+
     // current position — cyan
     if (hasPosition) {
       const [px, py] = toPixel(telemetry.x, telemetry.y);
@@ -187,7 +224,10 @@ export default function PolargraphPage({ node, sendCommand,
 
     // active drawing job — polyline, one segment per pair of consecutive
     // points, colored green if that segment's already been physically
-    // reached (job.reached) or red if it's still ahead
+    // reached (job.reached) or red if it's still ahead. Both solar_path
+    // and text jobs stream one flat, continuously-drawn point list (see
+    // drawing.py's _run_job), so every segment is a real pen-down line —
+    // no gaps to skip.
     if (job && job.points && job.points.length > 1) {
       const pts = job.points.map(([x, y]) => toPixel(x, y).map((v, i) => (i === 0 ? clampX(v) : clampY(v))));
       ctx.lineWidth = 2;
@@ -200,7 +240,7 @@ export default function PolargraphPage({ node, sendCommand,
         ctx.stroke();
       }
     }
-  }, [hasPosition, telemetry.x, telemetry.y, mapping, target, width, height, job]);
+  }, [hasPosition, telemetry.x, telemetry.y, telemetry.left_endstop, telemetry.right_endstop, mapping, target, width, height, job]);
 
   // Clears the target dot once the gondola's reported position is close
   // enough to it — mirrors the firmware's own arrival check in
@@ -295,6 +335,35 @@ export default function PolargraphPage({ node, sendCommand,
 
       {error && <div className="error-banner">{error}</div>}
 
+      {!isDrawing && (
+        <div className="text-control">
+          <input
+            id="write-text"
+            type="text"
+            placeholder="text to write, starting from current position"
+            value={writeText}
+            onChange={(e) => setWriteText(e.target.value)}
+          />
+          <label htmlFor="letter-height">height</label>
+          <input
+            id="letter-height"
+            type="number"
+            min="1"
+            step="5"
+            value={letterHeight}
+            onChange={(e) => setLetterHeight(parseFloat(e.target.value) || 1)}
+          />
+          <span className="scale-value">mm</span>
+          <button
+            className="jog-btn set-home-btn"
+            disabled={!writeText.trim()}
+            onClick={() => drawText(node.device_id, writeText, letterHeight)}
+          >
+            WRITE TEXT
+          </button>
+        </div>
+      )}
+
       <div className="canvas-toolbar">
         <button
           className="jog-btn set-home-btn"
@@ -320,8 +389,8 @@ export default function PolargraphPage({ node, sendCommand,
       {job && (
         <div className="job-status">
           {job.status === 'running'
-            ? `Drawing solar path — ${job.reached}/${job.total} points reached`
-            : 'Drawing complete'}
+            ? `${job.kind === 'text' ? 'Writing text' : 'Drawing solar path'} — ${job.reached}/${job.total} points reached`
+            : job.kind === 'text' ? 'Writing complete' : 'Drawing complete'}
         </div>
       )}
 

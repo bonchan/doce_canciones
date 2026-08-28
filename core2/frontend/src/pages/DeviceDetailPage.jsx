@@ -1,16 +1,20 @@
 import React from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import PolargraphPage from './devices/PolargraphPage';
+import VoicePage from './devices/VoicePage';
 import NotImplementedPage from './NotImplementedPage';
 
 // Per-type page registry — add an entry here when a device type gets its
 // own page. Anything not listed falls back to NotImplementedPage.
 const DEVICE_PAGES = {
   polargraph: PolargraphPage,
+  voice: VoicePage,
 };
 
-export default function DeviceDetailPage({ devices, sendCommand, drawSolarPath, cancelDrawing, error }) {
-  const { deviceId } = useParams();
+// deviceId now comes from DevicesPage (reading ?id=... off the URL) rather
+// than a :deviceId route param — this component itself doesn't care which,
+// it just needs the id.
+export default function DeviceDetailPage({ devices, sendCommand, drawSolarPath, drawText, cancelDrawing, error, deviceId }) {
   const node = devices[deviceId];
 
   if (!node) {
@@ -28,6 +32,7 @@ export default function DeviceDetailPage({ devices, sendCommand, drawSolarPath, 
       node={node}
       sendCommand={sendCommand}
       drawSolarPath={drawSolarPath}
+      drawText={drawText}
       cancelDrawing={cancelDrawing}
       error={error}
     />

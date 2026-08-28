@@ -2,11 +2,11 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import './App.css';
 import useDevices from './hooks/useDevices';
-import DeviceListPage from './pages/DeviceListPage';
-import DeviceDetailPage from './pages/DeviceDetailPage';
+import DevicesPage from './pages/DevicesPage';
 
 export default function App() {
-  const { devices, wsStatus, apiKey, setApiKey, error, sendCommand, drawSolarPath, cancelDrawing } = useDevices();
+  const { devices, wsStatus, apiKey, setApiKey, error, sendCommand, drawSolarPath, drawText, cancelDrawing } =
+    useDevices();
 
   return (
     <BrowserRouter>
@@ -15,25 +15,16 @@ export default function App() {
         <Route
           path="/devices"
           element={
-            <DeviceListPage
+            <DevicesPage
               devices={devices}
               wsStatus={wsStatus}
               apiKey={apiKey}
               setApiKey={setApiKey}
               error={error}
               sendCommand={sendCommand}
-            />
-          }
-        />
-        <Route
-          path="/devices/:deviceId"
-          element={
-            <DeviceDetailPage
-              devices={devices}
-              sendCommand={sendCommand}
               drawSolarPath={drawSolarPath}
+              drawText={drawText}
               cancelDrawing={cancelDrawing}
-              error={error}
             />
           }
         />
