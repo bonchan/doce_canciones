@@ -5,6 +5,7 @@ import asyncio
 from typing import Optional, Callable
 
 import paho.mqtt.client as mqtt
+import requests
 from dotenv import load_dotenv
 
 from logger import logger
@@ -13,6 +14,7 @@ from topics import (
     TOPIC_ANNOUNCE_WILD,
     TOPIC_TELEMETRY_WILD,
     TOPIC_CONFIG_WILD,
+    TOPIC_AUDIO_ACK_WILD,
     cmd_topic,
     broadcast_topic,
     parse_topic,
@@ -156,6 +158,43 @@ class Registry:
 
 registry = Registry()
 
+# ── audio staging ────────────────────────────────────────────────────────
+# device_id -> filename staged on file_server/server.py (routes.py's
+# /audio upload endpoint PUTs it there, not to local disk — see that
+# file's docstring). Cleared out once the device's audio_ack confirms it
+# saved its own copy (see _on_audio_ack below) — this is just bookkeeping
+# for that one handoff, not part of the registry's device state.
+AUDIO_SERVER_URL = os.getenv("AUDIO_SERVER_URL", "http://127.0.0.1:8090").rstrip("/")
+
+pending_audio: dict[str, str] = {}
+
+
+def register_pending_audio(device_id: str, filename: str):
+    """Called by routes.py's /audio upload endpoint right after staging a
+    file on the file server. If that device already had an unacknowledged
+    upload (e.g. it was offline, or two uploads happened before the first
+    was picked up), the older staged file would otherwise leak there —
+    clean it up now instead."""
+    old = pending_audio.get(device_id)
+    if old and old != filename:
+        try:
+            requests.delete(f"{AUDIO_SERVER_URL}/{old}", timeout=5)
+        except requests.RequestException as e:
+            logger.warning(f"could not remove stale staged audio {old} from file server: {e}")
+    pending_audio[device_id] = filename
+
+
+def _on_audio_ack(device_id: str):
+    filename = pending_audio.pop(device_id, None)
+    if not filename:
+        return  # nothing staged — a stale or duplicate ack, nothing to clean up
+    try:
+        requests.delete(f"{AUDIO_SERVER_URL}/{filename}", timeout=5)
+        logger.info(f"[audio_ack] {device_id} confirmed — removed staged {filename} from file server")
+    except requests.RequestException as e:
+        logger.warning(f"[audio_ack] {device_id} confirmed but couldn't remove {filename} from file server: {e}")
+
+
 # ── MQTT client ───────────────────────────────────────────────────────────
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 if MQTT_USER and MQTT_PASS:
@@ -178,6 +217,8 @@ def _handle(zone: str, device_id: str, kind: str, payload_bytes: bytes, retained
             registry.on_telemetry(zone, device_id, json.loads(payload_bytes), retained)
         elif kind == "config":
             registry.on_config(zone, device_id, json.loads(payload_bytes), retained)
+        elif kind == "audio_ack":
+            _on_audio_ack(device_id)
         else:
             return
     except Exception as e:
@@ -192,6 +233,7 @@ def _on_connect(c, userdata, flags, reason_code, properties):
     c.subscribe(TOPIC_ANNOUNCE_WILD)
     c.subscribe(TOPIC_TELEMETRY_WILD)
     c.subscribe(TOPIC_CONFIG_WILD)
+    c.subscribe(TOPIC_AUDIO_ACK_WILD)
 
 
 def _on_message(c, userdata, msg):

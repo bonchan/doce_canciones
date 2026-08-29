@@ -202,6 +202,15 @@ void handleBaseCommand(const char* cmd, JsonObject params) {
 // guarded with `if (onCommand)`.
 void onCommand(const char* cmd, JsonObject params) __attribute__((weak));
 
+// ── optional per-sketch hook: fires after every successful (re)connect ────
+// Same weak-symbol pattern as onCommand/announceExtraFields — define this
+// in your .ino only if you need to do something on (re)connect beyond what
+// device_base.h already does (publish online/announce). E.g. a sketch that
+// keeps its own retained state (like esp32C3_organismo's config) can
+// republish it here so it survives a broker restart that drops retained
+// messages.
+void onConnected() __attribute__((weak));
+
 // ── MQTT callback ────────────────────────────────────────────────────────
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     const char* capability = nullptr;
@@ -276,6 +285,9 @@ bool tryConnectMQTT() {
         mqttClient.subscribe((String(topicBroadcastPrefix) + "#").c_str());
         publishOnline();    // retained — overwrites any stale "offline" from a previous LWT
         publishAnnounce();  // retained — replayed to the brain even if it restarts later
+        if (onConnected) {
+            onConnected();  // optional per-sketch hook, e.g. republish other retained state
+        }
         return true;
     }
 

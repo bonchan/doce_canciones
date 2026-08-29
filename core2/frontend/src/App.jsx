@@ -5,8 +5,18 @@ import useDevices from './hooks/useDevices';
 import DevicesPage from './pages/DevicesPage';
 
 export default function App() {
-  const { devices, wsStatus, apiKey, setApiKey, error, sendCommand, drawSolarPath, drawText, cancelDrawing } =
-    useDevices();
+  const {
+    devices,
+    wsStatus,
+    apiKey,
+    setApiKey,
+    error,
+    sendCommand,
+    drawSolarPath,
+    drawText,
+    cancelDrawing,
+    uploadAudio,
+  } = useDevices();
 
   return (
     <BrowserRouter>
@@ -25,6 +35,7 @@ export default function App() {
               drawSolarPath={drawSolarPath}
               drawText={drawText}
               cancelDrawing={cancelDrawing}
+              uploadAudio={uploadAudio}
             />
           }
         />

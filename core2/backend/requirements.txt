@@ -6,3 +6,5 @@ firebase-admin
 pandas
 pvlib
 Hershey-Fonts
+python-multipart
+requests

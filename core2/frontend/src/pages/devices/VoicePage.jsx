@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import CommandPanel from '../../components/CommandPanel';
 import ConfigSliders from '../../components/ConfigSliders';
+import ConfigHeader from '../../components/ConfigHeader';
 
 // Voice (esp32C3_organismo) device page: identity/telemetry, then every
 // config value as a slider (see ConfigSliders — shared with VoiceCard, the
@@ -9,7 +10,9 @@ import ConfigSliders from '../../components/ConfigSliders';
 // panel for IDENTIFY/ALTER/UPDATE (SET is handled by the sliders instead).
 export default function VoicePage({ node, sendCommand, error }) {
   const caps = node.capabilities || { publishes: [], subscribes: [] };
+  const config = node.config || {};
   const telemetryEntries = Object.entries(node.telemetry || {});
+  const [hideUnset, setHideUnset] = useState(false);
 
   return (
     <div className="app device-page">
@@ -41,7 +44,15 @@ export default function VoicePage({ node, sendCommand, error }) {
         ))}
       </div>
 
-      <ConfigSliders deviceId={node.device_id} config={node.config} onCommand={sendCommand} />
+      <ConfigHeader
+        deviceId={node.device_id}
+        name={config.name}
+        onCommand={sendCommand}
+        hideUnset={hideUnset}
+        onHideUnsetChange={setHideUnset}
+      />
+
+      <ConfigSliders deviceId={node.device_id} config={node.config} onCommand={sendCommand} hideUnset={hideUnset} />
 
       <CommandPanel
         deviceId={node.device_id}

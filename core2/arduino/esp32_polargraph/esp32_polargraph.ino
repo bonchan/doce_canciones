@@ -2,7 +2,7 @@
 // e.g. "sensor.ldr", "actuator.speaker"
 #define DEVICE_TYPE "polargraph"
 #define SCRIPT_NAME "esp32_polargraph"
-#define CAPS_PUBLISHES "[\"x\", \"y\", \"left_distance_to_go\", \"right_distance_to_go\", \"queue_len\", \"queue_clears\", \"servo_write\"]"
+#define CAPS_PUBLISHES "[\"x\", \"y\", \"left_distance_to_go\", \"right_distance_to_go\", \"queue_len\", \"queue_clears\", \"servo_write\", \"left_endstop\", \"right_endstop\" ]"
 // + any custom capabilities you add below
 #define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\",\"HOME\",\"ZERO\",\"HALT\",\"WIND\",\"MOVE_ABS\",\"MOVE_REL\",\"SERVO_SET\",\"CAL\",\"QUEUE_ADD\"]"
 
@@ -14,6 +14,27 @@ const char *ZONE = "entrance";
 #include <AccelStepper.h>
 #include <Preferences.h>
 
+// Declared up here, right after the includes, on purpose: the Arduino IDE
+// auto-generates function prototypes and inserts them immediately after
+// the last #include, above everything else in the file. A prototype for
+// homeStateInit()/homeStateTick() referencing HomeState would get inserted
+// before HomeState existed if this struct/enum were declared further down
+// (where it's actually used) — "HomeState was not declared in this scope"
+// even though the real definition further down looks completely fine on
+// its own. Keeping type definitions functions depend on up here avoids
+// that whole class of auto-prototype ordering issue.
+enum HomePhase { HOME_SEEK, HOME_BACKOFF, HOME_TOUCH, HOME_DONE, HOME_FAILED };
+
+struct HomeState {
+  AccelStepper *motor;
+  int pin;
+  int inv;
+  HomePhase phase;
+  long phaseStartPos;  // currentPosition() at the start of the current phase
+  long backoffSteps;
+  long maxSteps;
+};
+
 // 28BYJ-48 motor = 4096 steps per full revolution in HALF4WIRE mode
 const long STEPS_PER_REV = 4096;
 
@@ -21,9 +42,50 @@ const long STEPS_PER_REV = 4096;
 AccelStepper left(AccelStepper::HALF4WIRE, 32, 25, 33, 26);
 AccelStepper right(AccelStepper::HALF4WIRE, 19, 5, 18, 17);
 
-// End Stops
+// End Stops — normally-closed, wired to GND with the pin pulled up (see
+// setup()): idle/untriggered = switch closed = pulled to GND = LOW;
+// triggered = switch open = pulled up = HIGH. Which winding direction
+// actually reaches the switch is hardware-specific — see
+// HOME_SEEK_DIRECTION below, confirmed by testing rather than assumed.
 const int LEFT_ENDSTOP_PIN = 27;
 const int RIGHT_ENDSTOP_PIN = 16;
+
+// Note there's no ENDSTOP_LEFT/RIGHT_LENGTH_MM constant here — an earlier
+// version tried to compute (x,y) from an assumed physical string length at
+// the trigger point, which requires knowing that length exactly (a tape-
+// measure value, easy to get slightly wrong) and produced nonsense
+// (curY > motorY) when left at its 0.0 placeholder. Simpler and more
+// robust: wherever both switches trip IS the reference point, full stop —
+// homeAtBoot() just declares that position (0,0), the same way manual
+// ZERO already does. No physical measurement needed at all.
+
+const float HOME_SEEK_SPEED = 600;    // steps/sec, fast first pass toward the switch
+const float HOME_TOUCH_SPEED = 150;   // steps/sec, slow re-approach — a switch's trip point
+                                        // can shift slightly with approach speed/momentum, so
+                                        // the slow touch (not the fast seek) is what the final
+                                        // position is actually trusted from
+const float HOME_BACKOFF_MM = 8.0;    // pulled off the switch before the slow re-approach,
+                                        // and enough that the seek->backoff->touch sequence
+                                        // can't mistake still being on the switch for done
+const float HOME_MAX_MM = 1500.0;     // safety cap: if a switch never trips (broken wire,
+                                        // unplugged, unconnected), give up after winding this
+                                        // much rather than grinding forever
+
+// Sign of the seek direction toward the switch — confirmed empirically on
+// the actual hardware (+1 is correct here). The "should be reeling in
+// since the switches are near the motors" reasoning turned out backwards
+// for this build: the real direction depends on how the string is wound
+// onto the spool, not just "closer to the motor = shorter string" gravity
+// logic. Trust hardware testing over reasoning about it from the desk —
+// if a future rewiring flips it again, this is the one line to change
+// rather than re-deriving the sign through the rest of homeStateTick().
+const int HOME_SEEK_DIRECTION = +1;
+
+// True only while homeAtBoot() is actively seeking a switch — lets the
+// runtime safety check in loop() (below) tell "this trigger is the
+// deliberate homing move" apart from "something wound in during normal
+// operation and needs an emergency stop".
+bool homingInProgress = false;
 
 
 // Servo
@@ -77,7 +139,11 @@ int windR = 0;
 // Not persisted to flash on purpose: an open-loop stepper's believed
 // position is never verified against reality, so trusting a saved value
 // blindly after a power cycle could be actively wrong (skipped steps,
-// gondola bumped while off, etc.) — re-zero fresh each boot instead.
+// gondola bumped while off, etc.) — re-established fresh each boot
+// instead, now automatically via homeAtBoot()'s endstops rather than
+// requiring a manual ZERO every power cycle. ZERO is still here as a
+// fallback/override — useful if the endstop length constants turn out to
+// be off, or you'd rather calibrate to a different physical reference.
 Preferences prefs;
 bool positionKnown = false;
 
@@ -321,14 +387,18 @@ void setup() {
   pinMode(RIGHT_ENDSTOP_PIN, INPUT_PULLUP);
 
   syncMotors();
-  Serial.println("System Ready (ESP32).");
-  Serial.println("Not zeroed yet. Jog to the reference point (top-middle) and send ZERO.");
 
   // standard 50Hz servo
   servo.setPeriodHertz(50);
   // tweak min/max pulse widths to your servo's spec if it buzzes/doesn't hit full range
   servo.attach(SERVO_PIN, 500, 2400);
   setServoPos(servoPos);
+
+  homeAtBoot();  // sets positionKnown itself — see there for what happens on failure
+  Serial.println("System Ready (ESP32).");
+  if (!positionKnown) {
+    Serial.println("Not zeroed yet. Jog to the reference point (top-middle) and send ZERO.");
+  }
 }
 
 void loop() {
@@ -340,10 +410,39 @@ void loop() {
   bool lEnd = digitalRead(LEFT_ENDSTOP_PIN) == HIGH;
   bool rEnd = digitalRead(RIGHT_ENDSTOP_PIN) == HIGH;
 
-  Serial.print("L endstop: ");
-  Serial.print(lEnd ? "TRIGGERED" : "         ");
-  Serial.print("  R endstop: ");
-  Serial.println(rEnd ? "TRIGGERED" : "         ");
+  // Print only on change, not every tick — this loop needs to run at a
+  // high, steady rate for AccelStepper's step timing (runSpeedToPosition/
+  // runSpeed) to produce smooth motion; Serial.print() on every single
+  // iteration (this was happening unconditionally before, with delay(1)
+  // right below) burns enough time per call to visibly stutter the motors.
+  static bool lastLEnd = false, lastREnd = false;
+  if (lEnd != lastLEnd || rEnd != lastREnd) {
+    Serial.print("L endstop: ");
+    Serial.print(lEnd ? "TRIGGERED" : "ok");
+    Serial.print("  R endstop: ");
+    Serial.println(rEnd ? "TRIGGERED" : "ok");
+    lastLEnd = lEnd;
+    lastREnd = rEnd;
+  }
+
+  // Safety backstop, separate from homeAtBoot()'s deliberate seeking: if a
+  // switch trips at any other time, the string has wound further in than
+  // it physically should — winding past this can jam the spool or snap
+  // the string. Full stop (same as HALT) rather than trying to save just
+  // the one side, since coordinated (x,y) tracking isn't meaningful once
+  // one side's real position has diverged from what the steppers believe
+  // anyway.
+  if (!homingInProgress && (lEnd || rEnd)) {
+    if (isMoving || isWinding) {
+      Serial.println("ENDSTOP TRIGGERED during motion — emergency stop");
+    }
+    isMoving = false;
+    isWinding = false;
+    queueClear();
+    left.disableOutputs();
+    right.disableOutputs();
+    setServoPos(servoUp);
+  }
 
   tickNetwork();
   tickCommands();
@@ -373,6 +472,10 @@ void loop() {
   doc["queue_len"] = queueLen;
   doc["queue_clears"] = queueClearCount;
   doc["servo_write"] = servoPos == servoWrite;
+  
+  doc["left_endstop"] = lEnd;
+  doc["right_endstop"] = rEnd;
+  
   // Position is only meaningful once ZERO has been sent this session -
   // report null,null until then rather than a raw, arbitrary coordinate.
   if (positionKnown) {
@@ -507,6 +610,138 @@ void syncMotors() {
   calculateSteps(curX, curY, sL, sR);
   left.setCurrentPosition(sL);
   right.setCurrentPosition(sR);
+}
+
+// ── homing state machine ────────────────────────────────────────────────
+// Both sides seek their endstop AT THE SAME TIME rather than one after the
+// other: AccelStepper's runSpeed() only issues a step when its own timer
+// says one is due, so ticking left's and right's homing forward in the
+// same loop iteration is exactly what normal operation already does
+// (loop()'s isMoving branch calls runSpeedToPosition() on both every
+// tick) — there's no coupling between the two strings during a seek, so
+// there's nothing sequential order was ever protecting against. This also
+// roughly halves total homing time versus doing one side fully, then the
+// other. (HomePhase/HomeState themselves are declared up near the includes
+// — see the comment there for why.)
+void homeStateInit(HomeState &s, AccelStepper &motor, int pin, int inv) {
+  s.motor = &motor;
+  s.pin = pin;
+  s.inv = inv;
+  s.phase = HOME_SEEK;
+  s.phaseStartPos = motor.currentPosition();
+  s.backoffSteps = (long)(HOME_BACKOFF_MM * stepsPerMm);
+  s.maxSteps = (long)(HOME_MAX_MM * stepsPerMm);
+  motor.setSpeed(HOME_SEEK_DIRECTION * HOME_SEEK_SPEED * inv);
+}
+
+// Advances this side by one tick (one motor.runSpeed() call at most, so
+// calling this for both sides once per loop iteration is what makes them
+// run concurrently). Returns true once this side has reached a terminal
+// state (HOME_DONE or HOME_FAILED) — caller stops ticking it at that point.
+bool homeStateTick(HomeState &s) {
+  switch (s.phase) {
+    case HOME_SEEK:
+      // Reel string in (toward the switch, see HOME_SEEK_DIRECTION above)
+      // until it trips.
+      if (digitalRead(s.pin) == HIGH) {
+        s.motor->setSpeed(0);
+        s.phase = HOME_BACKOFF;
+        s.phaseStartPos = s.motor->currentPosition();
+        s.motor->setSpeed(-HOME_SEEK_DIRECTION * HOME_SEEK_SPEED * s.inv);
+      } else if (labs(s.motor->currentPosition() - s.phaseStartPos) > s.maxSteps) {
+        Serial.println("WARNING: endstop never triggered during seek — homing aborted for this side");
+        s.motor->setSpeed(0);
+        s.phase = HOME_FAILED;
+      } else {
+        s.motor->runSpeed();
+      }
+      break;
+
+    case HOME_BACKOFF:
+      // Pull off the switch (opposite direction) before the slow re-touch.
+      if (labs(s.motor->currentPosition() - s.phaseStartPos) >= s.backoffSteps) {
+        s.motor->setSpeed(0);
+        s.phase = HOME_TOUCH;
+        s.phaseStartPos = s.motor->currentPosition();
+        s.motor->setSpeed(HOME_SEEK_DIRECTION * HOME_TOUCH_SPEED * s.inv);
+      } else {
+        s.motor->runSpeed();
+      }
+      break;
+
+    case HOME_TOUCH:
+      // Slow re-approach — this trigger, not the fast seek's, is the one
+      // the final position is trusted from (see HOME_TOUCH_SPEED above).
+      if (digitalRead(s.pin) == HIGH) {
+        s.motor->setSpeed(0);
+        s.phase = HOME_DONE;
+      } else if (labs(s.motor->currentPosition() - s.phaseStartPos) > s.backoffSteps * 2) {
+        Serial.println("WARNING: endstop didn't re-trigger on slow approach — homing aborted for this side");
+        s.motor->setSpeed(0);
+        s.phase = HOME_FAILED;
+      } else {
+        s.motor->runSpeed();
+      }
+      break;
+
+    default:
+      break;
+  }
+  return s.phase == HOME_DONE || s.phase == HOME_FAILED;
+}
+
+// Runs once at boot (see setup()) to establish (0,0) without any manual
+// ZERO — homes both sides concurrently (see the state-machine comment
+// above), and once both switches have tripped, declares that position the
+// origin directly (same semantics as onCommand()'s ZERO branch — "wherever
+// the gondola physically is right now becomes (0,0)"), rather than trying
+// to compute an (x,y) from an assumed physical string length at the
+// trigger point. Relies on both switches being mounted so that "both
+// tripped" is a repeatable physical spot (nominally top-middle) — the same
+// assumption manual ZERO already made about wherever you jogged it to.
+//
+// Blocking by design, same reasoning as setServoPos()'s slow-landing loop:
+// this only runs once, before the device does anything else useful, so
+// there's nothing meaningful to block. It does mean telemetry goes quiet
+// for the few seconds homing takes — if that exceeds the backend's
+// STALE_TIMEOUT (default 15s) the device may show briefly offline right
+// after boot before catching up; cosmetic, not a functional problem.
+//
+// If either side fails to home, positionKnown stays false and outputs are
+// disabled — exactly the pre-endstop behavior, so a broken switch degrades
+// to "send ZERO manually" rather than homing to a silently-wrong position
+// and drawing garbage.
+void homeAtBoot() {
+  Serial.println("Homing: seeking both endstops at once...");
+  homingInProgress = true;
+  left.enableOutputs();
+  right.enableOutputs();
+
+  HomeState ls, rs;
+  homeStateInit(ls, left, LEFT_ENDSTOP_PIN, invL);
+  homeStateInit(rs, right, RIGHT_ENDSTOP_PIN, invR);
+
+  bool leftFinished = false, rightFinished = false;
+  while (!leftFinished || !rightFinished) {
+    if (!leftFinished) leftFinished = homeStateTick(ls);
+    if (!rightFinished) rightFinished = homeStateTick(rs);
+  }
+
+  homingInProgress = false;
+
+  if (ls.phase == HOME_DONE && rs.phase == HOME_DONE) {
+    curX = 0;
+    curY = 0;
+    targetX = 0;
+    targetY = 0;
+    syncMotors();
+    positionKnown = true;
+    Serial.println("Homed — (0,0) set to endstop position.");
+  } else {
+    left.disableOutputs();
+    right.disableOutputs();
+    Serial.println("Homing incomplete — send ZERO manually before drawing.");
+  }
 }
 
 void setServoPos(int pos) {

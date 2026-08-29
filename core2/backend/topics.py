@@ -3,13 +3,15 @@
 # installation/<zone>/<device_id>/announce   retained        -> {type, capabilities, fw}
 # installation/<zone>/<device_id>/telemetry                  -> {...}
 # installation/<zone>/<device_id>/config     retained        -> {...}  (currently-set config, per device — not every device publishes this)
+# installation/<zone>/<device_id>/audio_ack                  -> {filename}  (device confirms it saved the file it was told to download — backend deletes its staged copy; not every device publishes this)
 # installation/<zone>/<device_id>/cmd/<capability>           <- backend publishes, device subscribes
 # installation/broadcast/<type>/cmd/<capability>              <- backend publishes, all devices of a type subscribe
 
-TOPIC_STATUS_WILD    = "installation/+/+/status"
-TOPIC_ANNOUNCE_WILD  = "installation/+/+/announce"
-TOPIC_TELEMETRY_WILD = "installation/+/+/telemetry"
-TOPIC_CONFIG_WILD    = "installation/+/+/config"
+TOPIC_STATUS_WILD     = "installation/+/+/status"
+TOPIC_ANNOUNCE_WILD   = "installation/+/+/announce"
+TOPIC_TELEMETRY_WILD  = "installation/+/+/telemetry"
+TOPIC_CONFIG_WILD     = "installation/+/+/config"
+TOPIC_AUDIO_ACK_WILD  = "installation/+/+/audio_ack"
 
 
 def cmd_topic(zone: str, device_id: str, capability: str) -> str:

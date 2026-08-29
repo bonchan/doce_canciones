@@ -15,7 +15,7 @@ const TYPE_CARDS = {
 // The original App.jsx grid, mounted (via DevicesPage) at /devices and
 // /devices?type=<type>. typeFilter comes from the URL — when set, this is
 // "every device of that type", zone-filterable on top via the chips below.
-export default function DeviceListPage({ devices, wsStatus, apiKey, setApiKey, error, sendCommand, typeFilter }) {
+export default function DeviceListPage({ devices, wsStatus, apiKey, setApiKey, error, sendCommand, uploadAudio, typeFilter }) {
   const [zoneFilter, setZoneFilter] = useState('all');
   const CardComponent = (typeFilter && TYPE_CARDS[typeFilter]) || DeviceCard;
 
@@ -102,7 +102,7 @@ export default function DeviceListPage({ devices, wsStatus, apiKey, setApiKey, e
 
       <div className="grid">
         {sortedDevices.map((node) => (
-          <CardComponent key={node.device_id} node={node} onCommand={sendCommand} />
+          <CardComponent key={node.device_id} node={node} onCommand={sendCommand} uploadAudio={uploadAudio} />
         ))}
         {sortedDevices.length === 0 && (
           <div className="empty">

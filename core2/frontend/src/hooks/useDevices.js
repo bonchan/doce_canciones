@@ -136,5 +136,47 @@ export default function useDevices() {
     [apiKey]
   );
 
-  return { devices, wsStatus, apiKey, setApiKey, error, sendCommand, drawSolarPath, drawText, cancelDrawing };
+  // Multipart upload — not JSON like sendCommand, so it's its own function
+  // rather than another capability. The backend stages the file and sends
+  // the device an AUDIO_UPDATE command itself; this call is just "get the
+  // bytes there." No Content-Type header — the browser sets the multipart
+  // boundary for us. Returns the fetch promise (unlike the other command
+  // helpers here) so a caller like VoiceCard can clear its own "uploading"
+  // state once it settles, on top of the shared error banner below.
+  const uploadAudio = useCallback(
+    (deviceId, file) => {
+      setError('');
+      const formData = new FormData();
+      formData.append('file', file);
+      return fetch(`${API_BASE}/api/devices/${deviceId}/audio`, {
+        method: 'POST',
+        headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
+        body: formData,
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `${res.status} ${res.statusText}`);
+          }
+        })
+        .catch((err) => {
+          setError(`Audio upload to ${deviceId} failed: ${err.message}`);
+          throw err;
+        });
+    },
+    [apiKey]
+  );
+
+  return {
+    devices,
+    wsStatus,
+    apiKey,
+    setApiKey,
+    error,
+    sendCommand,
+    drawSolarPath,
+    drawText,
+    cancelDrawing,
+    uploadAudio,
+  };
 }

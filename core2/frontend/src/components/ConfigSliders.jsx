@@ -37,7 +37,7 @@ const DEFAULT_DRAFT_VALUE = 0.5;
 // doesn't spam the broker with every intermediate step. Double-clicking a
 // label clears that key back to unset (see organismo_config.h's null
 // handling in handleSetCommand).
-export default function ConfigSliders({ deviceId, config, onCommand }) {
+export default function ConfigSliders({ deviceId, config, onCommand, hideUnset = false }) {
   const cfg = config || {};
 
   // Local slider positions — what's actually drawn. Kept in sync with the
@@ -80,6 +80,7 @@ export default function ConfigSliders({ deviceId, config, onCommand }) {
     <div className="config-sliders">
       {CONFIG_FIELDS.map(({ key, label, min, max, step }) => {
         const isSet = typeof cfg[key] === 'number';
+        if (hideUnset && !isSet) return null;
         return (
           <div key={key} className="config-row">
             <div className="config-row-label">

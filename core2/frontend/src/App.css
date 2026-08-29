@@ -522,3 +522,102 @@
 .type-link:hover strong {
   color: #93c5fd;
 }
+
+/* voice card audio upload */
+.audio-upload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  flex-wrap: wrap;
+}
+
+.audio-upload .jog-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.audio-filename {
+  font-size: 11px;
+}
+
+/* editable device name + hide-unset toggle (ConfigHeader) */
+.config-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.device-name {
+  font-size: 14px;
+  font-weight: bold;
+  color: #f9fafb;
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+}
+
+.device-name:hover {
+  border-bottom-color: #6b7280;
+}
+
+.name-edit-input {
+  font-size: 14px;
+  font-weight: bold;
+  font-family: inherit;
+  background: #111827;
+  border: 1px solid #10b981;
+  color: #f9fafb;
+  padding: 2px 6px;
+  border-radius: 4px;
+  width: 160px;
+}
+
+.hide-unset-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #9ca3af;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.hide-unset-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  background: #374151;
+  border-radius: 999px;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #9ca3af;
+  transition: transform 0.15s, background 0.15s;
+}
+
+.hide-unset-toggle input:checked + .switch-track {
+  background: #064e3b;
+}
+
+.hide-unset-toggle input:checked + .switch-track .switch-thumb {
+  transform: translateX(14px);
+  background: #34d399;
+}
