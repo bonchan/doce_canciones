@@ -31,7 +31,7 @@ AUDIO_SERVER_URL = os.getenv("AUDIO_SERVER_URL", "http://127.0.0.1:8090").rstrip
 # ESP32 flash is tight (see esp32C3_organismo/organismo_audio.h) — this is
 # a sanity cap, not a tuned value; raise it once you know what an actual
 # device's LittleFS partition can hold.
-MAX_AUDIO_BYTES = 1_500_000
+MAX_AUDIO_BYTES = 1_900_000
 
 
 def require_api_key(x_api_key: Optional[str] = Header(default=None)):

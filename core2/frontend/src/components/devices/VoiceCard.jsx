@@ -18,7 +18,7 @@ export default function VoiceCard({ node, onCommand, uploadAudio }) {
 
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
-  const [hideUnset, setHideUnset] = useState(false);
+  const [hideUnset, setHideUnset] = useState(true);
 
   // The <input> keeps whatever file was last picked, so re-selecting the
   // *same* file wouldn't otherwise fire a change event at all — clearing

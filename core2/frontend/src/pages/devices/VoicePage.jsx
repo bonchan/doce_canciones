@@ -12,7 +12,7 @@ export default function VoicePage({ node, sendCommand, error }) {
   const caps = node.capabilities || { publishes: [], subscribes: [] };
   const config = node.config || {};
   const telemetryEntries = Object.entries(node.telemetry || {});
-  const [hideUnset, setHideUnset] = useState(false);
+  const [hideUnset, setHideUnset] = useState(true);
 
   return (
     <div className="app device-page">
