@@ -2,9 +2,32 @@
 // e.g. "sensor.ldr", "actuator.speaker"
 #define DEVICE_TYPE "polargraph"
 #define SCRIPT_NAME "esp32_polargraph"
-#define CAPS_PUBLISHES "[\"x\", \"y\", \"left_distance_to_go\", \"right_distance_to_go\", \"queue_len\", \"queue_clears\", \"servo_write\", \"left_endstop\", \"right_endstop\" ]"
+
+// Telemetry/meta field names are short on purpose — the full announce
+// payload (this list + CAPS_SUBSCRIBES + the extra motor_* fields below)
+// was overflowing device_base.h's publishAnnounce() buffer and getting
+// silently truncated ("WARNING: announce payload truncated") once enough
+// capabilities/fields piled up. Command names (CAPS_SUBSCRIBES) and
+// command params (e.g. SET_MOTOR_Y's "steps") are untouched — they're not
+// part of the retained announce payload, only sent per-command, so they
+// weren't contributing to the overflow and shortening them would only
+// have made the CommandPanel/logs harder to read for no size benefit.
+//
+//   short  -> long (what it means)
+//   ldtg   -> left_distance_to_go  (AccelStepper left.distanceToGo())
+//   rdtg   -> right_distance_to_go (AccelStepper right.distanceToGo())
+//   qlen   -> queue_len            (points left in the on-device point queue)
+//   qclr   -> queue_clears         (queueClear() call count — interruption detection)
+//   swr    -> servo_write          (bool: is the pen currently in the "write" position)
+//   lend   -> left_endstop         (bool: left limit switch currently triggered)
+//   rend   -> right_endstop        (bool: right limit switch currently triggered)
+//   temp   -> chip_temp            (ESP32 internal temperature sensor)
+//   my     -> motor_y   (meta, announce-only) (derived mm height — see motorY/motorYSteps)
+//   md     -> motor_dist (meta, announce-only) (mm between the two motors)
+//   mys    -> motor_y_steps (meta, announce-only) (the actual persisted value — see motorYSteps)
+#define CAPS_PUBLISHES "[\"x\",\"y\",\"ldtg\",\"rdtg\",\"qlen\",\"qclr\",\"swr\",\"lend\",\"rend\"]"
 // + any custom capabilities you add below
-#define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\",\"HOME\",\"ZERO\",\"HALT\",\"WIND\",\"MOVE_ABS\",\"MOVE_REL\",\"SERVO_SET\",\"CAL\",\"QUEUE_ADD\"]"
+#define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\",\"HOME\",\"ZERO\",\"HALT\",\"WIND\",\"MOVE_ABS\",\"MOVE_REL\",\"SERVO_SET\",\"CAL\",\"QUEUE_ADD\",\"SET_MOTOR_Y\",\"SET_BOTTOM\"]"
 
 const char *ZONE = "entrance";
 
@@ -23,7 +46,7 @@ const char *ZONE = "entrance";
 // even though the real definition further down looks completely fine on
 // its own. Keeping type definitions functions depend on up here avoids
 // that whole class of auto-prototype ordering issue.
-enum HomePhase { HOME_SEEK, HOME_BACKOFF, HOME_TOUCH, HOME_DONE, HOME_FAILED };
+enum HomePhase { HOME_SEEK, HOME_SEEK_DONE, HOME_BACKOFF, HOME_TOUCH, HOME_DONE, HOME_FAILED };
 
 struct HomeState {
   AccelStepper *motor;
@@ -64,7 +87,7 @@ const float HOME_TOUCH_SPEED = 150;   // steps/sec, slow re-approach — a switc
                                         // can shift slightly with approach speed/momentum, so
                                         // the slow touch (not the fast seek) is what the final
                                         // position is actually trusted from
-const float HOME_BACKOFF_MM = 8.0;    // pulled off the switch before the slow re-approach,
+const float HOME_BACKOFF_MM = 10.0;    // pulled off the switch before the slow re-approach,
                                         // and enough that the seek->backoff->touch sequence
                                         // can't mistake still being on the switch for done
 const float HOME_MAX_MM = 1500.0;     // safety cap: if a switch never trips (broken wire,
@@ -107,8 +130,25 @@ const float gondolaWidth = 100.0;
 const float gondolaHeight = 90.0;
 // Motor to motor
 const float motorDist = 1700.0;
-// Height above origin
-const float motorY = 1000.0;
+
+// Height above origin (mm) — NOT the source of truth anymore, just a
+// derived value. What's actually persisted is motorYSteps: a raw step
+// count is a fact about this specific installation's physical rig (how
+// many steps of winding it takes to reach the bottom of its travel from
+// the endstop-established origin), independent of stepsPerMm calibration
+// accuracy. That's the point of storing it in steps rather than mm: move
+// the same rig to a new location with a different drop height, and the
+// step count for THAT drop is what changes — it's not something
+// stepsPerMm calibration (a motor/pulley property, not an installation
+// property) should silently invalidate, and it's not something you'd want
+// to remeasure-and-hardcode-recompile for every new install either.
+// recomputeMotorY() is what keeps this float in sync with motorYSteps
+// (and with stepsPerMm, so a later CAL recalibration doesn't leave it
+// stale) — see there, loadMotorYSteps(), and onCommand()'s SET_MOTOR_Y.
+float motorY = 1000.0;  // placeholder; recomputeMotorY() overwrites this in setup()
+long motorYSteps = 0;   // placeholder; loadMotorYSteps() overwrites this in setup()
+const float DEFAULT_MOTOR_Y_MM = 1000.0;  // fallback only, for the very first boot before SET_MOTOR_Y has ever been sent
+
 // Horizontal distance from center to motor
 const float motorX = motorDist / 2.0;
 
@@ -126,6 +166,15 @@ float segmentDist = 2.0;
 bool isWinding = false;
 int windL = 0;
 int windR = 0;
+
+// No latch/disableOutputs() flags here on purpose — see the runtime safety
+// check in loop(). Disabling outputs the instant a switch trips seemed
+// like the obvious move, but it blocks EVERY direction, including backing
+// away from the switch — with the motor de-energized, nothing can ever
+// move it off the switch again, so it stays "triggered" and stays
+// blocked, forever, even though backing off is exactly what should be
+// allowed. The fix is direction-aware blocking computed fresh each tick,
+// not a persistent halted state — see wouldWindToward() below.
 
 // ── calibration state ───────────────────────────────────────────────────
 // Single-point calibration: jog to one fixed, repeatable physical
@@ -156,6 +205,33 @@ void loadStepsPerMm() {
 void saveStepsPerMm() {
   prefs.begin("polargraph", false);
   prefs.putFloat("stepsPerMm", stepsPerMm);
+  prefs.end();
+}
+
+// Recomputes motorY (mm) from motorYSteps and the current stepsPerMm —
+// call this any time either one changes (loading at boot, SET_MOTOR_Y,
+// or CAL adjusting stepsPerMm) so motorY never goes stale relative to the
+// values it's actually derived from.
+void recomputeMotorY() {
+  motorY = motorYSteps / stepsPerMm;
+}
+
+// Must run AFTER loadStepsPerMm() — the very first boot (nothing saved
+// yet) falls back to DEFAULT_MOTOR_Y_MM converted through whatever
+// stepsPerMm was just loaded, so a fresh device behaves like the old
+// hardcoded 1000mm constant did until SET_MOTOR_Y is sent for the first
+// time at this installation.
+void loadMotorYSteps() {
+  prefs.begin("polargraph", true);
+  long defaultSteps = (long)(DEFAULT_MOTOR_Y_MM * stepsPerMm);
+  motorYSteps = prefs.getLong("motorYSteps", defaultSteps);
+  prefs.end();
+  recomputeMotorY();
+}
+
+void saveMotorYSteps() {
+  prefs.begin("polargraph", false);
+  prefs.putLong("motorYSteps", motorYSteps);
   prefs.end();
 }
 
@@ -234,14 +310,18 @@ void queueClear() {
 //     }
 // }
 
-// Advertises motorY and motorDist in the announce payload so the webapp can
+// Advertises motorY and motorDist in the announce payload (as "my"/"md" —
+// see the name-shortening comment above CAPS_PUBLISHES) so the webapp can
 // size/scale its canvas to the real working rectangle instead of guessing —
 // the origin sits at the top-middle reference point (see ZERO), motorY is
 // the vertical distance from there down to the motors' mounting height, and
 // motorDist is the full horizontal distance between the two motors.
+// motorYSteps (the actual persisted value, as "mys") is included too, so
+// the webapp's SET_MOTOR_Y control can show/pre-fill the device's current
+// setting instead of the derived mm figure.
 const char *announceExtraFields() {
-  static char buf[64];
-  snprintf(buf, sizeof(buf), "\"motor_y\":%.2f,\"motor_dist\":%.2f", motorY, motorDist);
+  static char buf[80];
+  snprintf(buf, sizeof(buf), "\"my\":%.2f,\"md\":%.2f,\"mys\":%ld", motorY, motorDist, motorYSteps);
   return buf;
 }
 
@@ -354,8 +434,68 @@ void onCommand(const char *cmd, JsonObject params) {
     } else {
       stepsPerMm = stepsPerMm * (commandedMM / measuredMM);
       saveStepsPerMm();
+      recomputeMotorY();  // motorYSteps (the persisted source of truth)
+                           // didn't change, but the mm it converts to did
       Serial.print("stepsPerMm updated to ");
       Serial.println(stepsPerMm, 6);
+    }
+  } else if (strcmp(cmd, "SET_MOTOR_Y") == 0) {
+    // Persists the physical drop height of THIS installation, in steps —
+    // see the motorYSteps declaration above for why steps rather than mm.
+    // Takes effect immediately (canvas-relevant geometry recomputed and
+    // re-announced) and survives reboot, so a new install site is just
+    // "wind down to the real bottom, read off the step count, send it
+    // here" rather than a firmware recompile.
+    long steps = params["steps"] | 0;
+    if (steps <= 0) {
+      Serial.println("SET_MOTOR_Y needs steps > 0");
+    } else {
+      motorYSteps = steps;
+      recomputeMotorY();
+      saveMotorYSteps();
+      // announce is retained but otherwise only sent once, on (re)connect
+      // (see device_base.h) — republish now so the webapp's canvas
+      // rescales immediately instead of waiting for the next reboot/
+      // reconnect to pick up the new geometry.
+      publishAnnounce();
+      Serial.print("motorY updated -> ");
+      Serial.print(motorYSteps);
+      Serial.print(" steps (");
+      Serial.print(motorY, 2);
+      Serial.println(" mm)");
+    }
+  } else if (strcmp(cmd, "SET_BOTTOM") == 0) {
+    // Same "wherever the gondola physically is becomes the reference"
+    // pattern ZERO uses (see there), but for the bottom boundary instead
+    // of the origin — no params needed, it reads curY, which
+    // updateCurrentPosition() already keeps live every loop from the
+    // real step counts.
+    //
+    // Deliberately NOT tied to any particular x: the geometry model keeps
+    // y decoupled from x (a real Cartesian rectangle, not polar), so this
+    // works correctly from wherever you send it. That matters here
+    // specifically because bottom-middle is NOT the worst case for either
+    // motor — the left motor's longest string is needed at bottom-RIGHT,
+    // the right motor's at bottom-LEFT — so jog to whichever corner is
+    // hardest for that side before sending this, not the middle, or the
+    // saved limit won't actually be safe once the gondola visits the
+    // corner it wasn't tested at. (Test both corners at your target depth
+    // before saving from either one, if you want to be sure both motors
+    // are actually happy there.)
+    if (!positionKnown) {
+      Serial.println("SET_BOTTOM needs a known position — send ZERO or let homing establish one first");
+    } else if (curY <= 0) {
+      Serial.println("SET_BOTTOM: current Y must be > 0 (below the origin) to mean anything as a bottom limit");
+    } else {
+      motorYSteps = (long)(curY * stepsPerMm);
+      recomputeMotorY();
+      saveMotorYSteps();
+      publishAnnounce();  // same reasoning as SET_MOTOR_Y — see there
+      Serial.print("Bottom set from current position -> ");
+      Serial.print(motorYSteps);
+      Serial.print(" steps (");
+      Serial.print(motorY, 2);
+      Serial.println(" mm)");
     }
   } else if (strcmp(cmd, "SERVO_SET") == 0) {
     // Takes a raw position again (not a write/bool) — the webapp's toggle
@@ -382,6 +522,7 @@ void setup() {
   right.setAcceleration(accel);
 
   loadStepsPerMm();
+  loadMotorYSteps();  // must come after loadStepsPerMm() — see there
 
   pinMode(LEFT_ENDSTOP_PIN, INPUT_PULLUP);
   pinMode(RIGHT_ENDSTOP_PIN, INPUT_PULLUP);
@@ -401,6 +542,28 @@ void setup() {
   }
 }
 
+// True if this motor's currently-commanded direction (WIND's live speed
+// while isWinding, or the moveTo() target while isMoving) matches
+// dangerDirection — the sign of "further into the switch", same as
+// homing's own HOME_SEEK_DIRECTION*inv. A motor with nothing actively
+// commanded (speed 0 / already at its target) returns false — there's
+// nothing to block. Used by the runtime safety check in loop() so it can
+// block only the dangerous direction and leave the opposite one (backing
+// off the switch) free, rather than freezing the motor outright.
+bool wouldWindToward(AccelStepper &motor, int dangerDirection) {
+  if (isWinding) {
+    float spd = motor.speed();
+    if (spd == 0) return false;
+    return ((spd > 0) ? 1 : -1) == dangerDirection;
+  }
+  if (isMoving) {
+    long dtg = motor.distanceToGo();
+    if (dtg == 0) return false;
+    return ((dtg > 0) ? 1 : -1) == dangerDirection;
+  }
+  return false;
+}
+
 void loop() {
   // Keep curX/curY a live mirror of where the motors actually are, however
   // they got there (path-following, WIND jogging, or anything else) — see
@@ -415,67 +578,98 @@ void loop() {
   // runSpeed) to produce smooth motion; Serial.print() on every single
   // iteration (this was happening unconditionally before, with delay(1)
   // right below) burns enough time per call to visibly stutter the motors.
-  static bool lastLEnd = false, lastREnd = false;
-  if (lEnd != lastLEnd || rEnd != lastREnd) {
-    Serial.print("L endstop: ");
-    Serial.print(lEnd ? "TRIGGERED" : "ok");
-    Serial.print("  R endstop: ");
-    Serial.println(rEnd ? "TRIGGERED" : "ok");
-    lastLEnd = lEnd;
-    lastREnd = rEnd;
-  }
+  // static bool lastLEnd = false, lastREnd = false;
+  // if (lEnd != lastLEnd || rEnd != lastREnd) {
+  //   Serial.print("L endstop: ");
+  //   Serial.print(lEnd ? "TRIGGERED" : "ok");
+  //   Serial.print("  R endstop: ");
+  //   Serial.println(rEnd ? "TRIGGERED" : "ok");
+  //   lastLEnd = lEnd;
+  //   lastREnd = rEnd;
+  // }
 
   // Safety backstop, separate from homeAtBoot()'s deliberate seeking: if a
-  // switch trips at any other time, the string has wound further in than
-  // it physically should — winding past this can jam the spool or snap
-  // the string. Full stop (same as HALT) rather than trying to save just
-  // the one side, since coordinated (x,y) tracking isn't meaningful once
-  // one side's real position has diverged from what the steppers believe
-  // anyway.
-  if (!homingInProgress && (lEnd || rEnd)) {
-    if (isMoving || isWinding) {
-      Serial.println("ENDSTOP TRIGGERED during motion — emergency stop");
-    }
-    isMoving = false;
-    isWinding = false;
-    queueClear();
-    left.disableOutputs();
-    right.disableOutputs();
-    setServoPos(servoUp);
+  // switch is triggered, block further motion in the direction that winds
+  // further INTO it — but NOT the opposite direction, which is exactly
+  // how you back off. This used to disableOutputs() entirely the instant
+  // a switch tripped, which seemed safer but actually deadlocked the
+  // motor: de-energized, nothing could ever move it off the switch again,
+  // so it stayed triggered — and blocked — forever, with no way to even
+  // unwind. Direction-aware blocking (via wouldWindToward() above) fixes
+  // that: the dangerous direction stays blocked, the safe one (unwind/
+  // back off) always works, no latch, no disableOutputs().
+  //
+  // dangerDirection is the same sign homing's own seek uses — "into the
+  // switch" is defined identically in both places.
+  int leftDanger = HOME_SEEK_DIRECTION * invL;
+  int rightDanger = HOME_SEEK_DIRECTION * invR;
+  bool leftBlocked = !homingInProgress && lEnd && wouldWindToward(left, leftDanger);
+  bool rightBlocked = !homingInProgress && rEnd && wouldWindToward(right, rightDanger);
+
+  // Print only on change (blocked, not just "triggered" — sitting on a
+  // switch while not trying to press further into it is harmless and not
+  // worth logging every tick).
+  static bool lastLeftBlocked = false, lastRightBlocked = false;
+  if (leftBlocked != lastLeftBlocked) {
+    Serial.println(leftBlocked ? "LEFT ENDSTOP — blocking further motion into the switch"
+                                : "Left motor free to move again");
+    lastLeftBlocked = leftBlocked;
   }
+  if (rightBlocked != lastRightBlocked) {
+    Serial.println(rightBlocked ? "RIGHT ENDSTOP — blocking further motion into the switch"
+                                 : "Right motor free to move again");
+    lastRightBlocked = rightBlocked;
+  }
+  // A blocked WIND command is cancelled outright (not just skipped this
+  // tick) rather than silently retried forever — the user has to
+  // explicitly re-jog (e.g. the opposite direction first, then back)
+  // rather than the motor just sitting there re-attempting the same
+  // blocked move every tick with no feedback.
+  if (leftBlocked && isWinding) { windL = 0; left.setSpeed(0); }
+  if (rightBlocked && isWinding) { windR = 0; right.setSpeed(0); }
 
   tickNetwork();
   tickCommands();
 
   if (isMoving) {
-    left.runSpeedToPosition();
-    right.runSpeedToPosition();
+    if (!leftBlocked) left.runSpeedToPosition();
+    if (!rightBlocked) right.runSpeedToPosition();
 
-    if (left.distanceToGo() == 0 && right.distanceToGo() == 0) {
+    // Only treat this as "arrived, advance the path" once both sides are
+    // actually free to move and have actually arrived — a blocked motor's
+    // distanceToGo() is frozen wherever it was, which isn't "arrived" in
+    // any meaningful sense, just stuck.
+    if (!leftBlocked && !rightBlocked && left.distanceToGo() == 0 && right.distanceToGo() == 0) {
       updatePath();
     }
   } else if (isWinding) {
-    // Continuous manual rotation
-    left.runSpeed();
-    right.runSpeed();
+    // Continuous manual rotation — blocked side just doesn't step; the
+    // other keeps jogging normally, and either side can still jog AWAY
+    // from its own triggered switch.
+    if (!leftBlocked) left.runSpeed();
+    if (!rightBlocked) right.runSpeed();
   }
 
   JsonDocument doc;
+  // Field names are short (ldtg/rdtg/qlen/qclr/swr/lend/rend/temp) — see
+  // the name-shortening comment above CAPS_PUBLISHES for the full
+  // short->long mapping and why.
+  //
   // The backend's drawing-job orchestrator (drawing.py's _stopped()) needs
-  // these to detect true arrival — queue_len==0 alone doesn't mean the
+  // ldtg/rdtg to detect true arrival — qlen==0 alone doesn't mean the
   // last point has been physically reached yet, only that it's no longer
   // queued. Without these two fields, _stopped() can never return true, so
   // neither the solar path job nor the text job can ever detect
   // completion — they just poll until the stall timeout fires and error out.
-  doc["left_distance_to_go"] = left.distanceToGo();
-  doc["right_distance_to_go"] = right.distanceToGo();
-  doc["queue_len"] = queueLen;
-  doc["queue_clears"] = queueClearCount;
-  doc["servo_write"] = servoPos == servoWrite;
-  
-  doc["left_endstop"] = lEnd;
-  doc["right_endstop"] = rEnd;
-  
+  doc["ldtg"] = left.distanceToGo();
+  doc["rdtg"] = right.distanceToGo();
+  doc["qlen"] = queueLen;
+  doc["qclr"] = queueClearCount;
+  doc["swr"] = servoPos == servoWrite;
+
+  doc["lend"] = lEnd;
+  doc["rend"] = rEnd;
+
   // Position is only meaningful once ZERO has been sent this session -
   // report null,null until then rather than a raw, arbitrary coordinate.
   if (positionKnown) {
@@ -485,7 +679,7 @@ void loop() {
     doc["x"] = nullptr;
     doc["y"] = nullptr;
   }
-  doc["chip_temp"] = temperatureRead();
+  doc["temp"] = temperatureRead();
   publishTelemetry(doc);
   delay(1);
 }
@@ -634,6 +828,18 @@ void homeStateInit(HomeState &s, AccelStepper &motor, int pin, int inv) {
   motor.setSpeed(HOME_SEEK_DIRECTION * HOME_SEEK_SPEED * inv);
 }
 
+// Promotes a side parked in HOME_SEEK_DONE into HOME_BACKOFF — called from
+// homeAtBoot()'s barrier once BOTH sides are settled (found their switch,
+// or given up), never by homeStateTick() itself, which is the whole point:
+// one side reaching its switch first is expected (they're two independent
+// strings), but it shouldn't start moving again — even just backing off —
+// until its sibling has stopped seeking too.
+void homeStateBeginBackoff(HomeState &s) {
+  s.phase = HOME_BACKOFF;
+  s.phaseStartPos = s.motor->currentPosition();
+  s.motor->setSpeed(-HOME_SEEK_DIRECTION * HOME_SEEK_SPEED * s.inv);
+}
+
 // Advances this side by one tick (one motor.runSpeed() call at most, so
 // calling this for both sides once per loop iteration is what makes them
 // run concurrently). Returns true once this side has reached a terminal
@@ -642,12 +848,14 @@ bool homeStateTick(HomeState &s) {
   switch (s.phase) {
     case HOME_SEEK:
       // Reel string in (toward the switch, see HOME_SEEK_DIRECTION above)
-      // until it trips.
+      // until it trips. Doesn't move straight into HOME_BACKOFF on its
+      // own — parks in HOME_SEEK_DONE instead, motor stopped, and waits
+      // for homeAtBoot()'s barrier to release both sides into backoff
+      // together (see there for why: backing one side off while the
+      // other is still actively seeking was the reported issue).
       if (digitalRead(s.pin) == HIGH) {
         s.motor->setSpeed(0);
-        s.phase = HOME_BACKOFF;
-        s.phaseStartPos = s.motor->currentPosition();
-        s.motor->setSpeed(-HOME_SEEK_DIRECTION * HOME_SEEK_SPEED * s.inv);
+        s.phase = HOME_SEEK_DONE;
       } else if (labs(s.motor->currentPosition() - s.phaseStartPos) > s.maxSteps) {
         Serial.println("WARNING: endstop never triggered during seek — homing aborted for this side");
         s.motor->setSpeed(0);
@@ -657,13 +865,34 @@ bool homeStateTick(HomeState &s) {
       }
       break;
 
+    case HOME_SEEK_DONE:
+      // Parked: this side found its switch and is waiting for the other
+      // side to either find its own or give up — nothing to do per tick.
+      // homeAtBoot() promotes this to HOME_BACKOFF once both sides are
+      // settled (see homeStateBeginBackoff()).
+      break;
+
     case HOME_BACKOFF:
-      // Pull off the switch (opposite direction) before the slow re-touch.
-      if (labs(s.motor->currentPosition() - s.phaseStartPos) >= s.backoffSteps) {
+      // Pull off the switch (opposite direction) — not for a fixed
+      // distance alone, but until it's traveled at least backoffSteps AND
+      // the switch has actually released (LOW), whichever takes longer.
+      // A fixed distance isn't reliable for a lever/angle-triggered switch
+      // (as opposed to a hard mechanical stop) — its trigger zone can be
+      // wider than a guessed backoff. Finishing homing with the switch
+      // still reading triggered is exactly what makes the runtime safety
+      // check in loop() lock the motors immediately afterward (see
+      // there): it can't distinguish "still on the switch from homing"
+      // from "wound in too far during normal operation".
+      if (labs(s.motor->currentPosition() - s.phaseStartPos) >= s.backoffSteps
+          && digitalRead(s.pin) == LOW) {
         s.motor->setSpeed(0);
         s.phase = HOME_TOUCH;
         s.phaseStartPos = s.motor->currentPosition();
         s.motor->setSpeed(HOME_SEEK_DIRECTION * HOME_TOUCH_SPEED * s.inv);
+      } else if (labs(s.motor->currentPosition() - s.phaseStartPos) > s.maxSteps) {
+        Serial.println("WARNING: endstop never released during backoff — homing aborted for this side");
+        s.motor->setSpeed(0);
+        s.phase = HOME_FAILED;
       } else {
         s.motor->runSpeed();
       }
@@ -725,6 +954,20 @@ void homeAtBoot() {
   while (!leftFinished || !rightFinished) {
     if (!leftFinished) leftFinished = homeStateTick(ls);
     if (!rightFinished) rightFinished = homeStateTick(rs);
+
+    // Barrier between seek and backoff: a side that found its switch
+    // parks in HOME_SEEK_DONE (see homeStateTick) instead of backing off
+    // immediately. Only once BOTH sides are "settled" — parked, or failed
+    // outright — do the parked one(s) get released into HOME_BACKOFF
+    // together. A side that failed its seek is still "settled" (it's not
+    // going anywhere), so it doesn't block the other side forever if its
+    // own switch is broken/unplugged.
+    bool leftSettled = ls.phase == HOME_SEEK_DONE || ls.phase == HOME_FAILED;
+    bool rightSettled = rs.phase == HOME_SEEK_DONE || rs.phase == HOME_FAILED;
+    if (leftSettled && rightSettled) {
+      if (ls.phase == HOME_SEEK_DONE) homeStateBeginBackoff(ls);
+      if (rs.phase == HOME_SEEK_DONE) homeStateBeginBackoff(rs);
+    }
   }
 
   homingInProgress = false;
@@ -786,6 +1029,6 @@ void setServoPos(int pos) {
     servoPos = pos;
   }
 
-  Serial.print("SERVO_SET -> ");
-  Serial.println(servoPos);
+  // Serial.print("SERVO_SET -> ");
+  // Serial.println(servoPos);
 }

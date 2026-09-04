@@ -90,9 +90,15 @@ def _stopped(telemetry: dict) -> bool:
     """True once both motors report ~0 distance-to-go — used anywhere
     "has the gondola actually arrived" matters (final drawing completion),
     rather than inferring it from position proximity (see module docstring
-    for why that broke down for closely-spaced points)."""
-    left_dtg = telemetry.get("left_distance_to_go")
-    right_dtg = telemetry.get("right_distance_to_go")
+    for why that broke down for closely-spaced points).
+
+    "ldtg"/"rdtg" etc below are the firmware's short telemetry field names
+    (esp32_polargraph.ino shortened them — left_distance_to_go/
+    right_distance_to_go/queue_len/queue_clears/etc — to keep the MQTT
+    announce payload under its buffer size; see the name-mapping comment
+    above CAPS_PUBLISHES there for the full list)."""
+    left_dtg = telemetry.get("ldtg")
+    right_dtg = telemetry.get("rdtg")
     return (
         left_dtg is not None and abs(left_dtg) <= STOP_TOLERANCE_STEPS
         and right_dtg is not None and abs(right_dtg) <= STOP_TOLERANCE_STEPS
@@ -100,26 +106,27 @@ def _stopped(telemetry: dict) -> bool:
 
 
 async def _establish_baseline_clears(device_id: str, dev: dict, pre_clears):
-    """Waits for a just-sent HALT/MOVE_ABS's queue_clears bump to actually
-    land in telemetry (bounded by a timeout) before returning a safe
-    baseline for external-interruption detection from this point forward.
-    A fixed delay isn't safe here — MQTT/WiFi round-trip time varies, and
-    establishing the baseline before our own bump has arrived makes a job
-    mistake its own command for an external interruption and cancel itself
-    immediately (this is what made the red line disappear right at the
-    start of a drawing, before this was fixed). Returns (dev, baseline)."""
+    """Waits for a just-sent HALT/MOVE_ABS's queue_clears ("qclr") bump to
+    actually land in telemetry (bounded by a timeout) before returning a
+    safe baseline for external-interruption detection from this point
+    forward. A fixed delay isn't safe here — MQTT/WiFi round-trip time
+    varies, and establishing the baseline before our own bump has arrived
+    makes a job mistake its own command for an external interruption and
+    cancel itself immediately (this is what made the red line disappear
+    right at the start of a drawing, before this was fixed). Returns
+    (dev, baseline)."""
     if pre_clears is not None:
         confirm_deadline = time.monotonic() + 5.0
         while time.monotonic() < confirm_deadline:
             dev = registry.devices.get(device_id) or dev
-            current = (dev.get("telemetry") or {}).get("queue_clears")
+            current = (dev.get("telemetry") or {}).get("qclr")
             if current is not None and current > pre_clears:
                 break
             await asyncio.sleep(0.15)
         else:
             logger.info(f"[drawing] {device_id} pre-job clear wasn't confirmed within 5s — proceeding anyway")
     dev = registry.devices.get(device_id) or dev
-    baseline = (dev.get("telemetry") or {}).get("queue_clears")
+    baseline = (dev.get("telemetry") or {}).get("qclr")
     return dev, baseline
 
 
@@ -158,8 +165,11 @@ async def start_solar_path_job(device_id: str, scale: float = 1.0, date: str | N
         raise DrawingError(f"{device_id} hasn't been zeroed yet — send SET HOME first")
 
     meta = dev.get("meta", {})
-    motor_dist = meta.get("motor_dist")
-    motor_y = meta.get("motor_y")
+    # "md"/"my" are the firmware's short announce field names for
+    # motor_dist/motor_y — see the name-mapping comment above
+    # CAPS_PUBLISHES in esp32_polargraph.ino.
+    motor_dist = meta.get("md")
+    motor_y = meta.get("my")
     if not motor_dist or not motor_y:
         raise DrawingError(f"{device_id} hasn't announced motor_dist/motor_y yet")
 
@@ -188,7 +198,7 @@ async def start_solar_path_job(device_id: str, scale: float = 1.0, date: str | N
     # _run_job, which waits for queue_clears to actually rise past it
     # before arming external-interruption detection — see _run_job for why
     # a fixed delay here isn't safe.
-    pre_halt_clears = (dev.get("telemetry") or {}).get("queue_clears")
+    pre_halt_clears = (dev.get("telemetry") or {}).get("qclr")
     try:
         broker.publish_command(device_id, "HALT", {})
     except KeyError:
@@ -266,7 +276,7 @@ async def _run_job(device_id: str, points: list[tuple[float, float]], pre_halt_c
             # MOVE_REL, sent via any control) cleared the device's queue —
             # treat that as a cancellation rather than trying to keep going
             # against a queue whose contents no longer match our bookkeeping.
-            clears = telemetry.get("queue_clears")
+            clears = telemetry.get("qclr")
             if clears is not None and baseline_clears is not None and clears > baseline_clears:
                 logger.info(f"[drawing] {device_id} interrupted externally (queue cleared) — stopping")
                 interrupted = True
@@ -274,7 +284,7 @@ async def _run_job(device_id: str, points: list[tuple[float, float]], pre_halt_c
             if baseline_clears is None:
                 baseline_clears = clears  # device didn't have this field yet on the first read
 
-            queue_len = telemetry.get("queue_len")
+            queue_len = telemetry.get("qlen")
             queue_len = queue_len if queue_len is not None else 0
 
             if sent < total and queue_len <= LOW_WATER:
@@ -297,7 +307,7 @@ async def _run_job(device_id: str, points: list[tuple[float, float]], pre_halt_c
             # legitimately take longer than STALL_TIMEOUT; only bail out if
             # nothing has moved at all, not just because we're still
             # mid-way through one long leg.
-            dtg = (telemetry.get("left_distance_to_go"), telemetry.get("right_distance_to_go"))
+            dtg = (telemetry.get("ldtg"), telemetry.get("rdtg"))
             moving = dtg != last_dtg and dtg[0] is not None
             last_dtg = dtg
 
@@ -399,7 +409,7 @@ async def start_text_job(
     # comes out as one unbroken line with the pen never lifting.
     flat_points = [pt for stroke in strokes for pt in stroke]
 
-    pre_halt_clears = (dev.get("telemetry") or {}).get("queue_clears")
+    pre_halt_clears = (dev.get("telemetry") or {}).get("qclr")
     try:
         broker.publish_command(device_id, "HALT", {})
     except KeyError:

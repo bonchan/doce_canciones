@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import CommandPanel from '../../components/CommandPanel';
 
 // Fallback px/mm and square size used only if the device hasn't announced
-// motor_y/motor_dist yet.
+// my/md (motor_y/motor_dist — short field names, see esp32_polargraph.ino's
+// name-mapping comment above CAPS_PUBLISHES) yet.
 const FALLBACK_SCALE = 0.3;
 const FALLBACK_SIZE = 600;
 const MAX_DIM = 600;  // longer canvas edge, in px
@@ -20,8 +21,31 @@ export default function PolargraphPage({ node, sendCommand,
 
   const telemetry = node.telemetry || {};
   const hasPosition = typeof telemetry.x === 'number' && typeof telemetry.y === 'number';
-  const motorY = node.meta && typeof node.meta.motor_y === 'number' ? node.meta.motor_y : null;
-  const motorDist = node.meta && typeof node.meta.motor_dist === 'number' ? node.meta.motor_dist : null;
+  // node.meta keys are the firmware's short announce field names (my/md/mys
+  // for motor_y/motor_dist/motor_y_steps) — see the name-mapping comment
+  // above CAPS_PUBLISHES in esp32_polargraph.ino.
+  const motorY = node.meta && typeof node.meta.my === 'number' ? node.meta.my : null;
+  const motorDist = node.meta && typeof node.meta.md === 'number' ? node.meta.md : null;
+
+  // Physical drop height of THIS installation, in steps — see
+  // esp32_polargraph.ino's SET_MOTOR_Y / motorYSteps for why steps rather
+  // than mm (a step count is a fact about this rig at this location,
+  // independent of stepsPerMm calibration; motor_y in mm above is only
+  // ever derived from it firmware-side). Editable here so a new install
+  // site is "wind down to the real bottom, read the step count, save it"
+  // rather than a firmware recompile.
+  const motorYSteps = node.meta && typeof node.meta.mys === 'number' ? node.meta.mys : null;
+  const [motorYStepsInput, setMotorYStepsInput] = useState('');
+  // Pre-fill from the device's own announced value, but only once — after
+  // that it's the user's to edit without each telemetry/meta update
+  // fighting their typing.
+  const [motorYStepsSynced, setMotorYStepsSynced] = useState(false);
+  useEffect(() => {
+    if (!motorYStepsSynced && motorYSteps !== null) {
+      setMotorYStepsInput(String(motorYSteps));
+      setMotorYStepsSynced(true);
+    }
+  }, [motorYStepsSynced, motorYSteps]);
 
   // Backend-orchestrated drawing job (currently just "solar_path") — see
   // drawing.py. null/undefined whenever nothing is running; the backend
@@ -52,11 +76,12 @@ export default function PolargraphPage({ node, sendCommand,
   // Pen-lift servo (P13, SERVO_SET {pos: raw value}) — the firmware clamps
   // whatever pos it's sent into [servoUp, servoWrite], so sending these
   // extreme values snaps onto the exact same up/write presets a boolean
-  // toggle would have used; telemetry's servo_write is still a plain bool
+  // toggle would have used; telemetry's swr ("servo_write" — short field
+  // name, see esp32_polargraph.ino) is still a plain bool
   // (servoPos === the write preset exactly), so it's still a reliable
   // on/off read for this specific button, just not for PEN CAL below (an
   // in-between position won't match either preset, which is expected).
-  const isWriting = telemetry.servo_write === true;
+  const isWriting = telemetry.swr === true;
 
   // Placeholder — replace with whatever number calibration turns out to
   // need. Sent as-is via SERVO_SET {pos: ...}; since it's not one of the
@@ -190,9 +215,10 @@ export default function PolargraphPage({ node, sendCommand,
     // target). Left switch drawn top-left, right top-right — if that ends
     // up visually backwards from the real hardware (same class of mirror
     // mixup as the axis flip above), just swap which telemetry field feeds
-    // which corner.
-    const leftTriggered = telemetry.left_endstop === true;
-    const rightTriggered = telemetry.right_endstop === true;
+    // which corner. Field names are short (lend/rend — see the
+    // name-mapping comment above CAPS_PUBLISHES in esp32_polargraph.ino).
+    const leftTriggered = telemetry.lend === true;
+    const rightTriggered = telemetry.rend === true;
 
     ctx.fillStyle = leftTriggered ? '#facc15' : '#374151';
     ctx.beginPath();
@@ -240,7 +266,7 @@ export default function PolargraphPage({ node, sendCommand,
         ctx.stroke();
       }
     }
-  }, [hasPosition, telemetry.x, telemetry.y, telemetry.left_endstop, telemetry.right_endstop, mapping, target, width, height, job]);
+  }, [hasPosition, telemetry.x, telemetry.y, telemetry.lend, telemetry.rend, mapping, target, width, height, job]);
 
   // Clears the target dot once the gondola's reported position is close
   // enough to it — mirrors the firmware's own arrival check in
@@ -426,6 +452,41 @@ export default function PolargraphPage({ node, sendCommand,
         >
           PEN CAL
         </button>
+      </div>
+
+      <div className="scale-control">
+        <label htmlFor="motor-y-steps">Height (steps)</label>
+        <input
+          id="motor-y-steps"
+          type="number"
+          min="1"
+          step="1"
+          value={motorYStepsInput}
+          onChange={(e) => setMotorYStepsInput(e.target.value)}
+          title="Physical drop height of this installation, in raw steps — wind down to the real bottom, read the step count off HERE, save it. Independent of stepsPerMm calibration; survives reboot."
+        />
+        <button
+          className="jog-btn set-home-btn"
+          disabled={!motorYStepsInput || Number(motorYStepsInput) <= 0}
+          onClick={() => sendCommand(node.device_id, 'SET_MOTOR_Y', { steps: parseInt(motorYStepsInput, 10) })}
+        >
+          SET HEIGHT
+        </button>
+        {motorYSteps !== null && <span className="scale-value">current: {motorYSteps}</span>}
+        <button
+          className="jog-btn set-home-btn"
+          disabled={!hasPosition}
+          title="Jog to whichever bottom corner is hardest for that side's motor first (NOT the middle — see below), then click this to save the current position as the bottom limit."
+          onClick={() => {
+            sendCommand(node.device_id, 'SET_BOTTOM', {});
+            setMotorYStepsSynced(false);  // re-sync the steps field from the device's new announced value once it arrives
+          }}
+        >
+          SET BOTTOM HERE
+        </button>
+      </div>
+      <div className="job-status">
+        Jog to a bottom CORNER (not the middle — it's not the worst case for either motor) before SET BOTTOM HERE.
       </div>
 
       <CommandPanel deviceId={node.device_id} capabilities={caps.subscribes} onCommand={sendCommand} />

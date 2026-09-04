@@ -112,7 +112,12 @@ void publishAnnounce() {
     // list needs — snprintf itself is overflow-safe (truncates + always
     // null-terminates), but a truncated announce is invalid JSON on the
     // wire, so warn if a future capability list ever grows past this.
-    char buf[400];
+    // Bumped 400->512 (2025: the polargraph sketch's CAPS_PUBLISHES +
+    // CAPS_SUBSCRIBES + announceExtraFields() combined were tipping past
+    // 400 and getting silently truncated) — short field/capability names
+    // are still the real fix for keeping headroom as more get added, this
+    // is just extra margin, not a substitute for that.
+    char buf[512];
     int n = snprintf(buf, sizeof(buf),
         "{\"type\":\"%s\",\"fw\":\"%s\",\"sn\":\"%s\",\"capabilities\":{\"publishes\":%s,\"subscribes\":%s}%s}",
         DEVICE_TYPE, FW_VERSION, SCRIPT_NAME, CAPS_PUBLISHES, CAPS_SUBSCRIBES, extra);

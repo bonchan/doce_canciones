@@ -13,6 +13,14 @@ dashboard.
 - `drawing.py` — orchestrates multi-point drawings on a polargraph: batches points to the device's onboard queue (see `esp32_polargraph.ino`'s `QUEUE_ADD`/`queue_len`), refills on a low-water mark, tracks progress from `sent - queue_len` (points the firmware has actually popped, not proximity guessing), and exposes job state (`dev["job"]`) over the existing `/ws/state` websocket
 - `main.py` — app assembly: creates the FastAPI app, wires up `routes.py`, and owns startup/shutdown (including the MQTT connect-retry loop and the Firebase pusher)
 
+Note on the polargraph specifically: its actual MQTT telemetry/meta field
+names are short (`ldtg`/`rdtg`/`qlen`/`qclr`/`swr`/`lend`/`rend`/`temp`,
+`my`/`md`/`mys`) — they were shortened to keep the device's MQTT announce
+payload under its buffer size on the firmware side. This doc still refers
+to them by their descriptive long form (`queue_len`, `motor_dist`, etc.)
+for readability; see the name-mapping comment above `CAPS_PUBLISHES` in
+`esp32_polargraph.ino` for the authoritative short↔long list.
+
 ## Requirements
 
 - Python 3.10+
