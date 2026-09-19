@@ -68,7 +68,9 @@ static func _ridged(uv: Vector2, k: float, octaves: int) -> float:
 
 static func height(p: Vector2, hill_scale: float, hill_height: float,
 		mountain_scale: float, mountain_height: float, warp: float,
-		terrace_step: float, terrace_strength: float) -> float:
+		terrace_step: float, terrace_strength: float,
+		canyon_scale: float = 0.0, canyon_depth: float = 0.0,
+		canyon_width: float = 0.35) -> float:
 	var uv: Vector2 = p / WRAP_PERIOD
 	var kh: float = _cells(hill_scale)
 	var km: float = _cells(mountain_scale)
@@ -84,6 +86,16 @@ static func height(p: Vector2, hill_scale: float, hill_height: float,
 
 	var h: float = rolling * hill_height * lerp(0.5, 1.0, region)
 	h += ridged * ridged * mountain_height * region
+
+	if canyon_depth > 0.0 and canyon_scale > 0.0:
+		var kc: float = _cells(canyon_scale)
+		var kcr: float = _cells(canyon_scale * 0.25)
+		var cn: float = _ridged(q, kc, 4)
+		var lo: float = lerp(0.90, 0.52, clamp(canyon_width, 0.0, 1.0))
+		var channel: float = smoothstep(lo, lo + 0.13, cn)
+		var creg: float = smoothstep(0.42, 0.58, _fbm(uv, kcr, 3, Vector2(23.0, 47.0)))
+		var canyon: float = channel * creg
+		h = h * lerp(1.0, 0.35, canyon) - canyon * canyon_depth
 
 	if terrace_strength > 0.0:
 		var step: float = max(terrace_step, 0.01)

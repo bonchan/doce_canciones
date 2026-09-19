@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="PilotConfig" format=3 uid="uid://bogvys5ypfjgy"]
+
+[ext_resource type="Script" uid="uid://buvevnj7pu2xm" path="res://scripts/pilot_config.gd" id="1"]
+
+[resource]
+script = ExtResource("1")

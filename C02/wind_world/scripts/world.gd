@@ -36,10 +36,12 @@ extends Node3D
 ##   1-9 blend to preset res://configs/<n>_name.tres (top row or keypad)
 ##   F4  blend to the next preset
 ##   0   auto-cycle presets on/off (every auto_cycle_seconds)
+##   F5  cycle steering source   F6  re-zero the plank
 ##
-## MOUSE
-##   left-drag   turn the heading (where we travel)
-##   wheel       travel speed multiplier (wheel all the way down stops)
+## STEERING
+##   Where we travel comes from Pilot (scripts/pilot_input.gd), which is fed by
+##   the mouse, by the plank over serial, or by nothing at all -- this script
+##   only reads Pilot.heading_delta / Pilot.throttle and doesn't care which.
 
 const WRAP_PERIOD: float = 8192.0  # MUST match W_WRAP_PERIOD in common.gdshaderinc
 const CONFIG_DIR := "res://configs/"
@@ -48,13 +50,12 @@ const DEFAULT_CONFIG := "res://configs/1_meadow.tres"
 ## rescanned and registered the global class.
 const Plants := preload("res://scripts/plant_meshes.gd")
 ## Set by the starting preset; can't blend (they size meshes / tiles).
-const FIXED_PROPS := ["terrain_size", "terrain_subdivisions", "field_tile_size", "prop_tile_size"]
+const FIXED_PROPS := ["terrain_size", "terrain_subdivisions", "field_tile_size", "prop_tile_size",
+	"grass_clump_size", "grass_clump_radius", "grass_clump_splay"]
 
 ## The starting look. Falls back to 1_meadow.tres when empty.
 @export var config: WorldConfig
-@export var speed_multiplier: float = 1.0 ## mouse wheel changes this at runtime
-@export var mouse_turn_speed: float = 0.25 ## degrees of heading per pixel dragged
-@export var heading_smoothing: float = 3.0 ## higher = heading follows the drag faster
+@export var heading_smoothing: float = 3.0 ## higher = heading follows the steering faster
 ## Drift through the presets on its own, one blend every this many seconds.
 ## 0 = off. Key 0 toggles it at runtime.
 @export var auto_cycle_seconds: float = 0.0
@@ -76,8 +77,15 @@ var _lerp_props: Array = []
 var _auto_timer: float = 0.0
 var _auto_on: bool = false
 
+## Whatever Pilot is steering with (mouse, plank, nothing) lands here.
+var speed_multiplier: float = 1.0
 var _heading_target: float = 0.0
-var _dragging: bool = false
+
+## Meters of wall on the shallower side of us. Above ~2 we are in something
+## trench-like; near 0 we are out in the open.
+var canyon_walls: float = 0.0
+var _canyon_following: bool = false
+var _canyon_timer: float = 0.0
 var _field_tile: float
 var _terrain_cell: float
 var _terrain_mi: MeshInstance3D
@@ -181,6 +189,12 @@ func _process(delta: float) -> void:
 	_update_transition(delta)
 	_update_auto_cycle(delta)
 
+	# Steering: mouse, plank over serial, or nobody. See scripts/pilot_input.gd.
+	_heading_target += Pilot.heading_delta
+	speed_multiplier = Pilot.throttle
+	# The land gets a say too, but only a nudge -- the pilot always wins.
+	_update_canyon(delta)
+
 	heading = lerp_angle(heading, _heading_target, clamp(heading_smoothing * delta, 0.0, 1.0))
 	travel_dir = Vector2(-sin(heading), -cos(heading))
 
@@ -209,21 +223,8 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton:
-		match event.button_index:
-			MOUSE_BUTTON_LEFT:
-				_dragging = event.pressed
-			MOUSE_BUTTON_WHEEL_UP:
-				if event.pressed:
-					speed_multiplier = 0.1 if speed_multiplier < 0.1 else min(speed_multiplier * 1.15, 20.0)
-			MOUSE_BUTTON_WHEEL_DOWN:
-				if event.pressed:
-					speed_multiplier = 0.0 if speed_multiplier <= 0.1 else speed_multiplier / 1.15
-		return
-	if event is InputEventMouseMotion:
-		if _dragging:
-			_heading_target -= deg_to_rad(event.relative.x * mouse_turn_speed)
-		return
+	# Mouse steering lives in Pilot now, alongside the plank, so this only
+	# handles the look/debug keys.
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	# 1-9 (top row or keypad): blend to the preset named "<n>_something.tres".
@@ -356,7 +357,8 @@ func _finish_transition() -> void:
 
 func _height_for(cfg: WorldConfig, p: Vector2) -> float:
 	return TerrainNoise.height(p, cfg.hill_scale, cfg.hill_height, cfg.mountain_scale,
-		cfg.mountain_height, cfg.warp_strength, cfg.terrace_step, cfg.terrace_strength)
+		cfg.mountain_height, cfg.warp_strength, cfg.terrace_step, cfg.terrace_strength,
+		cfg.canyon_scale, cfg.canyon_depth, cfg.canyon_width)
 
 
 ## Same blend as w_ground() in common.gdshaderinc.
@@ -367,19 +369,79 @@ func ground_height(world_p: Vector2) -> float:
 	return lerp(ha, _height_for(_to, world_p), _blend)
 
 
+# -------------------------------------------------------------------- canyons
+
+const CANYON_SIDE := 26.0  ## meters either side where we feel for walls
+const CANYON_AHEAD := 45.0 ## meters ahead we look for the lane
+
+
+## Meters the ground rises on the SHALLOWER side of us. Positive means the land
+## closes in both ways -- we are in a canyon, a gully or at least a dip.
+func _measure_walls() -> float:
+	var perp := Vector2(travel_dir.y, -travel_dir.x)
+	var here: float = ground_height(scroll_offset)
+	var left: float = ground_height(scroll_offset + perp * CANYON_SIDE)
+	var right: float = ground_height(scroll_offset - perp * CANYON_SIDE)
+	return minf(left, right) - here
+
+
+## Heading offset that keeps the ground lowest ahead. A canyon floor is the
+## lowest thing around, so steering downhill IS following the canyon -- no
+## need to know anything about the noise that carved it.
+func _canyon_bearing() -> float:
+	var best: float = 0.0
+	var best_h: float = INF
+	for i in range(-4, 5):
+		var dh: float = deg_to_rad(float(i) * 11.0)
+		var d := Vector2(-sin(heading + dh), -cos(heading + dh))
+		# Two probes so it commits to a lane that keeps going, not a pothole.
+		var h: float = ground_height(scroll_offset + d * CANYON_AHEAD) \
+				+ ground_height(scroll_offset + d * (CANYON_AHEAD * 0.5))
+		if h < best_h:
+			best_h = h
+			best = dh
+	return best
+
+
+## Drop into a canyon when one closes in, ride it downstream for a while, then
+## let it go and stay out in the open until the next one.
+func _update_canyon(delta: float) -> void:
+	canyon_walls = _measure_walls()
+	if c.canyon_follow_strength <= 0.0:
+		_canyon_following = false
+		return
+	_canyon_timer -= delta
+	if not _canyon_following:
+		if _canyon_timer <= 0.0 and canyon_walls >= c.canyon_enter_depth:
+			_canyon_following = true
+			_canyon_timer = c.canyon_follow_time
+		return
+	# Time's up, or the walls fell away and the canyon opened out.
+	if _canyon_timer <= 0.0 or canyon_walls < c.canyon_exit_depth:
+		_canyon_following = false
+		_canyon_timer = c.canyon_follow_cooldown
+		return
+	var t: float = clamp(c.canyon_follow_strength * delta * 3.0, 0.0, 1.0)
+	_heading_target += _canyon_bearing() * t
+
+
 func _push_terrain_params() -> void:
 	var b: WorldConfig = _to if _transitioning else _from
 	var a0 := Vector4(_from.hill_scale, _from.hill_height, _from.mountain_scale, _from.mountain_height)
 	var a1 := Vector3(_from.warp_strength, _from.terrace_step, _from.terrace_strength)
+	var a2 := Vector3(_from.canyon_scale, _from.canyon_depth, _from.canyon_width)
 	var b0 := Vector4(b.hill_scale, b.hill_height, b.mountain_scale, b.mountain_height)
 	var b1 := Vector3(b.warp_strength, b.terrace_step, b.terrace_strength)
+	var b2 := Vector3(b.canyon_scale, b.canyon_depth, b.canyon_width)
 	for mat in [_terrain_mat, _grass_mat, _flower_mat]:
 		if mat == null:
 			continue
 		mat.set_shader_parameter("terrain_a0", a0)
 		mat.set_shader_parameter("terrain_a1", a1)
+		mat.set_shader_parameter("terrain_a2", a2)
 		mat.set_shader_parameter("terrain_b0", b0)
 		mat.set_shader_parameter("terrain_b1", b1)
+		mat.set_shader_parameter("terrain_b2", b2)
 		mat.set_shader_parameter("terrain_blend", _blend if _transitioning else 0.0)
 
 
@@ -565,13 +627,31 @@ func _build_grass() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1337
 	var half: float = _field_tile * 0.5
+	# Tussocks: every `clump` consecutive blades share a crown and fan out of
+	# it, leaving bare ground between clumps. clump = 1 is the old even lawn.
+	# Consecutive so that drawing only the first N instances still yields whole
+	# clumps rather than shredding them.
+	var clump: int = maxi(c.grass_clump_size, 1)
+	var crown := Vector2.ZERO
 	for i in range(_grass_max):
-		var x: float = rng.randf_range(-half, half)
-		var z: float = rng.randf_range(-half, half)
+		if i % clump == 0:
+			crown = Vector2(rng.randf_range(-half, half), rng.randf_range(-half, half))
+		var pos := Vector3(crown.x, 0.0, crown.y)
 		var width_scale: float = rng.randf_range(0.7, 1.3)
 		var rot: float = rng.randf_range(0.0, TAU)
 		var b := Basis(Vector3.UP, rot).scaled(Vector3(width_scale, 1.0, 1.0))
-		mm.set_instance_transform(i, Transform3D(b, Vector3(x, 0.0, z)))
+		if clump > 1:
+			# Biased toward the middle, so the clump has a dense heart.
+			var a: float = rng.randf() * TAU
+			var d: float = c.grass_clump_radius * pow(rng.randf(), 0.7)
+			var out := Vector3(cos(a), 0.0, sin(a))
+			pos += out * d
+			# Lean away from the crown, more the further out -- a fountain.
+			if d > 0.001 and c.grass_clump_splay > 0.0:
+				var axis: Vector3 = Vector3.UP.cross(out).normalized()
+				var lean: float = c.grass_clump_splay * (d / maxf(c.grass_clump_radius, 0.001))
+				b = Basis(axis, lean) * b
+		mm.set_instance_transform(i, Transform3D(b, pos))
 		mm.set_instance_custom_data(i, Color(rng.randf(), 0.0, 0.0, 0.0)) # r = height pick
 
 	_grass_mmi = MultiMeshInstance3D.new()
@@ -1193,13 +1273,27 @@ func _update_hud(delta: float) -> void:
 	_hud.text = "\n".join([
 		"FPS %d   preset %s   auto %s" % [Engine.get_frames_per_second(), preset, ("every %ds" % int(auto_cycle_seconds)) if _auto_on and auto_cycle_seconds > 0.0 else "off"],
 		"wind  %.1f m/s  dir (%.2f, %.2f)" % [WindInput.current_speed, dir.x, dir.y],
-		"travel  %.1f m/s  (x%.2f wheel)   heading %d°" % [forward_speed, speed_multiplier, int(fposmod(rad_to_deg(-heading), 360.0))],
+		"travel  %.1f m/s  (x%.2f)   heading %d°   %s" % [forward_speed, speed_multiplier, int(fposmod(rad_to_deg(-heading), 360.0)), _steering_text()],
 		"camera  %.1f m above ground   pitch %.1f°   watching %s (%d specials around)" % [_cam_y - ground_height(scroll_offset), rad_to_deg(_cam_pitch), "yes" if not _interest.is_empty() else "no", n_special],
+		"canyon  walls %+.1f m   %s" % [canyon_walls, ("following, %ds left" % int(_canyon_timer)) if _canyon_following else (("open, next in %ds" % int(_canyon_timer)) if _canyon_timer > 0.0 else "open, watching")],
 		"particles %d" % n_particles,
 		"",
 		"F1 wireframe [%s]   F2 grass/flowers [%s]   F3 hud   1-9 / F4 preset   0 auto-cycle" % ["on" if wire else "off", "on" if _grass_mmi.visible else "off"],
-		"drag: heading   wheel: speed   +/- wind speed   arrows/WASD wind direction",
+		"F5 steering source   F6 re-zero plank   drag: heading   wheel: speed   +/- wind speed   arrows/WASD wind direction",
 	])
+
+
+## "steering mouse" / "steering serial [no port]" / "steering serial (calibrating)".
+func _steering_text() -> String:
+	var s := "steering " + Pilot.source_name()
+	if Pilot.config.source == PilotConfig.Source.SERIAL:
+		if not ImuInput.connected:
+			s += " [no port]"
+		elif ImuInput.is_calibrating():
+			s += " (hold still)"
+		else:
+			s += "  stick (%+.2f, %+.2f)" % [Pilot.stick.x, Pilot.stick.y]
+	return s
 
 
 func _on_wind_changed(_speed: float, _direction: Vector2) -> void:

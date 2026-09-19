@@ -10,8 +10,12 @@ class_name PlantMeshes
 ##             thorny branches and a flat grey-green canopy (~0.6 m tall, 3 m wide)
 ##   coiron    tussock grass (Pappostipa / Festuca) -- straw-colored clump of
 ##             blades, the texture of the whole steppe (~0.5 m)
+##   chanar    Geoffroea decorticans -- small tree, several trunks straight out
+##             of the ground opening into a goblet, smooth yellow-green
+##             photosynthetic bark, and a dense haze of bare thorny twigs
+##             instead of a leafy canopy (~2.5 m)
 
-const KINDS := ["zampa", "jarilla", "alpataco", "coiron"]
+const KINDS := ["zampa", "jarilla", "alpataco", "coiron", "chanar"]
 
 const BARK := Color(0.34, 0.29, 0.23)
 
@@ -26,6 +30,7 @@ static func build(kind: String, seed1: int) -> ArrayMesh:
 		"jarilla": _jarilla(st, rng)
 		"alpataco": _alpataco(st, rng)
 		"coiron": _coiron(st, rng)
+		"chanar": _chanar(st, rng)
 	st.generate_normals()
 	return st.commit()
 
@@ -114,6 +119,61 @@ static func _coiron(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
 		st.set_color(dark); st.add_vertex(base - side)
 		st.set_color(dark); st.add_vertex(base + side)
 		st.set_color(col); st.add_vertex(tip)
+
+
+## Chanar. The whole plant is bark -- it photosynthesises through it, so there
+## are no foliage clumps anywhere, just wood going from thick yellow-green
+## trunks out to a fog of bare twigs. Built by recursion: several trunks leave
+## the ground already leaning apart, and each one keeps forking into a goblet.
+static func _chanar(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
+	var trunks: int = rng.randi_range(3, 5)
+	var h: float = rng.randf_range(2.2, 3.0)
+	for i in range(trunks):
+		var az: float = TAU * float(i) / float(trunks) + rng.randf_range(-0.45, 0.45)
+		var lean: float = rng.randf_range(0.16, 0.40)
+		var base := Vector3(cos(az), 0.0, sin(az)) * rng.randf_range(0.0, 0.08)
+		var dir := Vector3(sin(lean) * cos(az), cos(lean), sin(lean) * sin(az))
+		_chanar_limb(st, rng, base, dir, h * rng.randf_range(0.34, 0.46), 0.075, 0)
+
+
+const CHANAR_TRUNK := Color(0.50, 0.56, 0.22)  ## thick old wood, olive
+const CHANAR_LIMB := Color(0.66, 0.70, 0.28)   ## younger wood, yellow-green
+const CHANAR_TWIG := Color(0.62, 0.60, 0.40)   ## the bare thorny ends, straw
+
+
+static func _chanar_limb(st: SurfaceTool, rng: RandomNumberGenerator, from: Vector3,
+		dir: Vector3, length: float, radius: float, depth: int) -> void:
+	var to: Vector3 = from + dir * length
+	var r1: float = radius * rng.randf_range(0.55, 0.72)
+	var col: Color = CHANAR_TRUNK if depth == 0 else (CHANAR_LIMB if depth <= 2 else CHANAR_TWIG)
+	# Thin ends get 3 sides; nobody can tell, and there are a lot of them.
+	_branch(st, from, to, radius, r1, col, 4 if depth <= 1 else 3)
+	if depth >= 4:
+		# Tip spray: the thorny haze that reads as the canopy from a distance.
+		for k in range(rng.randi_range(1, 3)):
+			var t: Vector3 = _spread(rng, dir, rng.randf_range(0.5, 1.2))
+			_branch(st, to, to + t * length * rng.randf_range(0.4, 0.8), r1, r1 * 0.3, CHANAR_TWIG, 3)
+		return
+	# Forking 3 ways only near the base; further out it stays binary, or the
+	# triangle count runs away for something you only ever see in silhouette.
+	var n: int = rng.randi_range(2, 3) if depth <= 1 else 2
+	for i in range(n):
+		# Wide forks low down open the goblet; higher up they tighten and the
+		# outer ones start to arch over instead of climbing.
+		var spread: float = rng.randf_range(0.30, 0.55) if depth <= 1 else rng.randf_range(0.45, 0.95)
+		var nd: Vector3 = _spread(rng, dir, spread)
+		nd = (nd + Vector3.UP * (0.30 if depth <= 1 else -0.08)).normalized()
+		_chanar_limb(st, rng, to, nd, length * rng.randf_range(0.62, 0.80), r1, depth + 1)
+
+
+## A direction `angle` radians off `dir`, rolled to a random side of it.
+static func _spread(rng: RandomNumberGenerator, dir: Vector3, angle: float) -> Vector3:
+	var ref := Vector3.UP if absf(dir.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+	var u: Vector3 = dir.cross(ref).normalized()
+	var v: Vector3 = dir.cross(u).normalized()
+	var roll: float = rng.randf() * TAU
+	var side: Vector3 = u * cos(roll) + v * sin(roll)
+	return (dir * cos(angle) + side * sin(angle)).normalized()
 
 
 # ------------------------------------------------------------------ helpers

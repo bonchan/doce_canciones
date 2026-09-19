@@ -17,6 +17,24 @@ extends Resource
 @export var terrace_step: float = 2.5 ## meters between terrace shelves
 @export_range(0.0, 1.0) var terrace_strength: float = 0.0 ## 0 = smooth, 1 = hard mesas
 
+@export_group("Canyons")
+## Branching channels cut DOWN into the land, the counterpart to the mountain
+## ranges that rise out of it. They cluster in their own regions, so you cross
+## open ground, then a canyon country, then open ground again.
+@export var canyon_scale: float = 0.0 ## frequency (1/meters); 0 = no canyons at all
+@export var canyon_depth: float = 0.0 ## meters carved down; 0 = no canyons at all
+@export_range(0.0, 1.0) var canyon_width: float = 0.35 ## narrow slot .. broad valley
+
+@export_group("Canyon following")
+## When the land closes in on both sides the camera can take the hint, drop
+## into the canyon and follow it downstream for a while before climbing out.
+## 0 = never; it just sails over everything as before.
+@export_range(0.0, 1.0) var canyon_follow_strength: float = 0.0
+@export var canyon_enter_depth: float = 3.0 ## meters of wall either side before it takes the bait
+@export var canyon_exit_depth: float = 1.0 ## walls lower than this and the canyon has opened out
+@export var canyon_follow_time: float = 22.0 ## max seconds in one canyon
+@export var canyon_follow_cooldown: float = 18.0 ## seconds of open country before looking for the next
+
 @export_group("Terrain colors")
 @export var color_low: Color = Color(0.11, 0.28, 0.14)
 @export var color_high: Color = Color(0.55, 0.75, 0.35)
@@ -42,6 +60,13 @@ extends Resource
 @export var grass_color_base: Color = Color(0.09, 0.24, 0.10)
 @export var grass_color_tip: Color = Color(0.42, 0.62, 0.22)
 @export var grass_bend_strength: float = 0.9
+## Coiron doesn't grow as a lawn, it grows as tussocks: tight clumps of blades
+## fanning out of one crown, with bare ground between them. Blades per clump;
+## 1 = evenly scattered, the old meadow behaviour. Baked at startup, so it
+## can't blend between presets (like the tile sizes).
+@export var grass_clump_size: int = 1
+@export var grass_clump_radius: float = 0.3 ## meters from the crown to the outermost blade
+@export_range(0.0, 1.2) var grass_clump_splay: float = 0.5 ## radians the outer blades lean out
 @export var grass_tip_emission: Color = Color(0, 0, 0) ## glow at the blade tips (black = off)
 
 @export_group("Flowers")

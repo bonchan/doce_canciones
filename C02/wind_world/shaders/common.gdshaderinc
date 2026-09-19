@@ -90,9 +90,11 @@ float w_ridged(vec2 uv, float k_in, int octaves) {
 //   mountain_scale / mountain_height: ridged ranges that come and go
 //   warp                            : meters of domain warp (less grid-like)
 //   terrace_step / terrace_strength : flat shelves + steep risers (mesas)
+//   canyon_*                        : channels carved DOWN out of the land
 float w_terrain_height(vec2 p, float hill_scale, float hill_height,
 		float mountain_scale, float mountain_height, float warp,
-		float terrace_step, float terrace_strength) {
+		float terrace_step, float terrace_strength,
+		float canyon_scale, float canyon_depth, float canyon_width) {
 	vec2 uv = p / W_WRAP_PERIOD;
 	float kh = w_cells(hill_scale);
 	float km = w_cells(mountain_scale);
@@ -113,6 +115,25 @@ float w_terrain_height(vec2 p, float hill_scale, float hill_height,
 	float h = rolling * hill_height * mix(0.5, 1.0, region);
 	h += ridged * ridged * mountain_height * region;
 
+	// Canyons. Mountains are the ridged noise read as crests; canyons are the
+	// same trick upside down -- the ridge LINES of a second ridged field form
+	// a connected, branching network, and we carve that network down into the
+	// land instead of piling it up. So ranges still rise and canyons drop, and
+	// both come and go with their own region mask.
+	if (canyon_depth > 0.0 && canyon_scale > 0.0) {
+		float kc = w_cells(canyon_scale);
+		float kcr = w_cells(canyon_scale * 0.25);
+		float cn = w_ridged(q, kc, 4);
+		// Wider canyons = accept more of the field around each ridge line.
+		float lo = mix(0.90, 0.52, clamp(canyon_width, 0.0, 1.0));
+		float channel = smoothstep(lo, lo + 0.13, cn);
+		float creg = smoothstep(0.42, 0.58, w_fbm(uv, kcr, 3, vec2(23.0, 47.0)));
+		float canyon = channel * creg;
+		// Flatten the floor as it drops, so there is a lane down there to
+		// follow rather than more rolling hills at a lower altitude.
+		h = h * mix(1.0, 0.35, canyon) - canyon * canyon_depth;
+	}
+
 	if (terrace_strength > 0.0) {
 		float step = max(terrace_step, 0.01);
 		float t = h / step;
@@ -130,20 +151,23 @@ float w_terrain_height(vec2 p, float hill_scale, float hill_height,
 // the parameters -- lerping the frequencies would make the lattice jump.
 //   x0 = (hill_scale, hill_height, mountain_scale, mountain_height)
 //   x1 = (warp_strength, terrace_step, terrace_strength)
+//   x2 = (canyon_scale, canyon_depth, canyon_width)
 uniform vec4 terrain_a0 = vec4(0.035, 4.5, 0.012, 14.0);
 uniform vec3 terrain_a1 = vec3(25.0, 2.5, 0.0);
+uniform vec3 terrain_a2 = vec3(0.0, 0.0, 0.35);
 uniform vec4 terrain_b0 = vec4(0.035, 4.5, 0.012, 14.0);
 uniform vec3 terrain_b1 = vec3(25.0, 2.5, 0.0);
+uniform vec3 terrain_b2 = vec3(0.0, 0.0, 0.35);
 uniform float terrain_blend : hint_range(0.0, 1.0) = 0.0;
 
 float w_ground(vec2 p) {
 	if (terrain_blend <= 0.0) {
-		return w_terrain_height(p, terrain_a0.x, terrain_a0.y, terrain_a0.z, terrain_a0.w, terrain_a1.x, terrain_a1.y, terrain_a1.z);
+		return w_terrain_height(p, terrain_a0.x, terrain_a0.y, terrain_a0.z, terrain_a0.w, terrain_a1.x, terrain_a1.y, terrain_a1.z, terrain_a2.x, terrain_a2.y, terrain_a2.z);
 	}
-	float hb = w_terrain_height(p, terrain_b0.x, terrain_b0.y, terrain_b0.z, terrain_b0.w, terrain_b1.x, terrain_b1.y, terrain_b1.z);
+	float hb = w_terrain_height(p, terrain_b0.x, terrain_b0.y, terrain_b0.z, terrain_b0.w, terrain_b1.x, terrain_b1.y, terrain_b1.z, terrain_b2.x, terrain_b2.y, terrain_b2.z);
 	if (terrain_blend >= 1.0) {
 		return hb;
 	}
-	float ha = w_terrain_height(p, terrain_a0.x, terrain_a0.y, terrain_a0.z, terrain_a0.w, terrain_a1.x, terrain_a1.y, terrain_a1.z);
+	float ha = w_terrain_height(p, terrain_a0.x, terrain_a0.y, terrain_a0.z, terrain_a0.w, terrain_a1.x, terrain_a1.y, terrain_a1.z, terrain_a2.x, terrain_a2.y, terrain_a2.z);
 	return mix(ha, hb, terrain_blend);
 }

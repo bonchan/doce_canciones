@@ -30,12 +30,69 @@ Debug keys:
 - `1`–`9` — blend into preset `configs/<n>_name.tres` (top row or keypad; see Presets below)
 - `F4` — blend into the next preset
 - `0` — auto-cycle through the presets on/off (every `auto_cycle_seconds` on the World node)
+- `F5` — cycle the steering source (auto → mouse → serial → mqtt)
+- `F6` — re-zero the plank: stand still in your neutral pose and press it
 
 Mouse:
 
 - left-click + drag — turn the heading (where you travel and look)
 - wheel — travel speed multiplier (×1.15 per notch, up to ×20; wheel all
   the way down stops)
+
+## Steering
+
+Where you travel comes from `Pilot` (`scripts/pilot_input.gd`), the one place
+that says "turn this much, go this fast". `World` reads `Pilot.heading_delta`
+and `Pilot.throttle` and never touches a mouse or a sensor, so swapping the
+input device changes nothing downstream. (Not to be confused with `WindInput`,
+which is the weather: the wind carries you, `Pilot` points you.)
+
+Pick the source in `imu/pilot_default.tres`, or press `F5` while running:
+
+- **auto** — nobody steers; the wind carries you. The original behaviour.
+- **mouse** — drag and wheel, as above.
+- **serial** — an MPU-6050 on a plank you stand on, over USB. Both axes behave
+  like the mouse they replace: leaning left/right turns for as long as you hold
+  it and stops where you leave it (like a drag), and leaning forward winds the
+  speed *up* while leaning back winds it *down* to a stop (like the wheel), so
+  coming back to centre **holds** the speed you reached.
+- **mqtt** — the same numbers over the network. Not implemented yet; coasts
+  like *auto* if you select it.
+
+`allow_mouse_override` (on by default) keeps the mouse live while the plank is
+driving, which is handy while building — the wheel becomes a master gain on
+top of the lean. Turn it off for the installation so a stray mouse can't
+hijack the piece.
+
+### The plank
+
+`ImuInput` (`scripts/imu_input.gd`) reads the board over serial through the
+[GdSerial](https://github.com/sujithchristopher/gdserial) addon and runs a
+complementary filter over it: the accelerometer knows which way is down but
+picks up every footstep, the gyro is smooth but drifts, so trusting the gyro
+short-term and letting the accelerometer pull it straight long-term gives an
+angle that is both steady underfoot and drift-free. A plain MPU-6050 has no
+magnetometer, so there is no absolute heading — twist is available as a *rate*
+only.
+
+Set the port in `imu/imu_default.tres` (leave `com_port` empty to print the
+ports Godot can see). Tilt is measured against whatever pose you calibrated, so
+the sensor doesn't need to sit level on the plank — stand naturally and press
+`F6`.
+
+Tune the feel in `imu/pilot_default.tres`. The dead zones stop the view creeping
+and the speed drifting while you just balance; `turn_rate_deg` sets how fast a
+full lean comes round; `accelerate_per_sec` / `brake_per_sec` set how quickly
+speed winds up and down, and `start_throttle` decides whether you arrive already
+moving or have to lean forward to get going.
+
+If leaning feels like it takes a moment to register, the knob is `gyro_trust` in
+`imu/imu_default.tres`, not anything in the pilot config: the accelerometer only
+pulls the angle over by `1 - gyro_trust` per sample, so 0.98 takes most of a
+second to catch up while 0.9 lands in about 0.15s. Lower it further (0 is
+accelerometer only) if it still lags; raise it if footsteps make the view
+twitch. The expo curves are the other suspect — `turn_expo` above ~1.5 makes
+small leans weak enough to feel like lag.
 
 ## How it works
 
@@ -200,8 +257,9 @@ What a config holds:
   cooldown, how lazily it turns and lets go)
 - **Transition**: seconds to blend into this preset
 
-The `World` node itself only keeps the runtime controls:
-`speed_multiplier`, `mouse_turn_speed`, `heading_smoothing`.
+The `World` node itself only keeps `heading_smoothing` (how fast the heading
+follows the steering). Everything else about the controls lives in
+`imu/pilot_default.tres` — see Steering above.
 
 ## What's next (once you're ready)
 
