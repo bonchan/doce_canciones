@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+paho-mqtt>=2.0
+python-dotenv
+firebase-admin
+pandas
+pvlib
+Hershey-Fonts
+python-multipart
+requests

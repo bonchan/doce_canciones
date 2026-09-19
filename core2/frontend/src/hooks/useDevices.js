@@ -1,0 +1,182 @@
+import { useState, useEffect, useCallback } from 'react';
+
+// Falls back to whatever host the page was loaded from, so this works both
+// on the NUC itself and from another machine on the gallery LAN — override
+// with VITE_API_BASE in .env if the backend lives somewhere else.
+const API_BASE = import.meta.env.VITE_API_BASE || `http://${window.location.hostname}:8000`;
+const WS_BASE = API_BASE.replace(/^http/, 'ws');
+
+// Single source of truth for the live registry + command sending, shared by
+// every page (list view, device detail view) so they all see the same
+// devices without each opening its own websocket.
+export default function useDevices() {
+  const [devices, setDevices] = useState({});
+  const [wsStatus, setWsStatus] = useState('Connecting...');
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('apiKey') || '');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    localStorage.setItem('apiKey', apiKey);
+  }, [apiKey]);
+
+  // Initial load — /api/devices returns the registry as { device_id: {...} }
+  useEffect(() => {
+    fetch(`${API_BASE}/api/devices`)
+      .then((res) => res.json())
+      .then((data) => setDevices(data))
+      .catch((err) => console.error('Error fetching devices:', err));
+  }, []);
+
+  // Live updates — backend pushes the full registry snapshot on every change
+  useEffect(() => {
+    let ws = null;
+    let reconnectTimer = null;
+    let isMounted = true;
+
+    function connect() {
+      if (!isMounted) return;
+      ws = new WebSocket(`${WS_BASE}/ws/state`);
+
+      ws.onopen = () => {
+        if (isMounted) setWsStatus('Connected');
+      };
+      ws.onclose = () => {
+        if (!isMounted) return;
+        setWsStatus('Disconnected. Retrying...');
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+      ws.onerror = () => ws.close();
+      ws.onmessage = (event) => {
+        if (!isMounted) return;
+        const message = JSON.parse(event.data);
+        if (message.type === 'STATE') {
+          setDevices(message.data);
+        }
+      };
+    }
+
+    connect();
+    return () => {
+      isMounted = false;
+      clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+    };
+  }, []);
+
+  const sendCommand = useCallback(
+    (deviceId, capability, params = {}) => {
+      setError('');
+      fetch(`${API_BASE}/api/devices/${deviceId}/command/${capability}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
+        body: JSON.stringify(params),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        })
+        .catch((err) => setError(`Command to ${deviceId} failed: ${err.message}`));
+    },
+    [apiKey]
+  );
+
+  // Draw-job endpoints are separate from sendCommand (not a raw device
+  // capability — the backend orchestrates a whole multi-point job). No
+  // body needed; the backend computes the points itself.
+  const drawSolarPath = useCallback(
+    (deviceId, scale = 1, date = null) => {
+      setError('');
+      const params = new URLSearchParams({ scale });
+      if (date) params.set('date', date);  // omit entirely to let the backend default to today
+      fetch(`${API_BASE}/api/devices/${deviceId}/draw/solar_path?${params}`, {
+        method: 'POST',
+        headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `${res.status} ${res.statusText}`);
+          }
+        })
+        .catch((err) => setError(`Draw solar path on ${deviceId} failed: ${err.message}`));
+    },
+    [apiKey]
+  );
+
+  const drawText = useCallback(
+    (deviceId, text, letterHeightMm = 30) => {
+      setError('');
+      const params = new URLSearchParams({ text, letter_height_mm: letterHeightMm });
+      fetch(`${API_BASE}/api/devices/${deviceId}/draw/text?${params}`, {
+        method: 'POST',
+        headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `${res.status} ${res.statusText}`);
+          }
+        })
+        .catch((err) => setError(`Write text on ${deviceId} failed: ${err.message}`));
+    },
+    [apiKey]
+  );
+
+  const cancelDrawing = useCallback(
+    (deviceId) => {
+      setError('');
+      fetch(`${API_BASE}/api/devices/${deviceId}/draw/cancel`, {
+        method: 'POST',
+        headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
+      }).catch((err) => setError(`Cancel drawing on ${deviceId} failed: ${err.message}`));
+    },
+    [apiKey]
+  );
+
+  // Multipart upload — not JSON like sendCommand, so it's its own function
+  // rather than another capability. The backend stages the file and sends
+  // the device an AUDIO_UPDATE command itself; this call is just "get the
+  // bytes there." No Content-Type header — the browser sets the multipart
+  // boundary for us. Returns the fetch promise (unlike the other command
+  // helpers here) so a caller like VoiceCard can clear its own "uploading"
+  // state once it settles, on top of the shared error banner below.
+  const uploadAudio = useCallback(
+    (deviceId, file) => {
+      setError('');
+      const formData = new FormData();
+      formData.append('file', file);
+      return fetch(`${API_BASE}/api/devices/${deviceId}/audio`, {
+        method: 'POST',
+        headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
+        body: formData,
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `${res.status} ${res.statusText}`);
+          }
+        })
+        .catch((err) => {
+          setError(`Audio upload to ${deviceId} failed: ${err.message}`);
+          throw err;
+        });
+    },
+    [apiKey]
+  );
+
+  return {
+    devices,
+    wsStatus,
+    apiKey,
+    setApiKey,
+    error,
+    sendCommand,
+    drawSolarPath,
+    drawText,
+    cancelDrawing,
+    uploadAudio,
+  };
+}
