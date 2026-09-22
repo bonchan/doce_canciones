@@ -20,3 +20,4 @@ plant_size_max = 1.4
 special_shapes = PackedStringArray("torus", "sphere", "torus")
 particle_layers = Array[ExtResource("2_layer")]([SubResource("Layer_1")])
 camera_interest_speed = 0.5
+transition_time = 15.0

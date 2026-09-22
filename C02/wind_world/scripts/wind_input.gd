@@ -11,10 +11,16 @@ extends Node
 ##                  is coming FROM (matches most anemometer firmware).
 ## Example packet: "3.4,225.0"
 ##
-## Use tools/serial_bridge.py to turn a serial/USB anemometer into this UDP
-## stream. If no packets arrive, WindInput falls back to a gentle simulated
-## breeze (and optional keyboard override) so the piece still runs, and the
-## installation computer, without hardware attached.
+## Wind also arrives over MQTT, which is how the installation actually feeds
+## it: any device on the bus publishing wind_speed and wind_direction in its
+## telemetry (the real anemometer, or the simulator in
+## core2/simulator/devices/anemometer.py) is picked up automatically, whatever
+## zone or id it turns up under. The dashboard can also set the wind by hand
+## with the WIND command, which simply overrides the same two targets.
+##
+## If nothing arrives from any source, WindInput falls back to a gentle
+## simulated breeze (and optional keyboard override) so the piece still runs
+## on an installation computer with no hardware attached.
 
 signal wind_changed(speed_ms: float, direction: Vector2)
 
@@ -42,6 +48,11 @@ var _bind_ok := false
 
 
 func _ready() -> void:
+	# Any telemetry carrying wind_speed / wind_direction counts as an
+	# anemometer -- we do not care which device it is.
+	if not Device.wind_topic.is_empty():
+		Device.subscribe_topic(Device.wind_topic)
+		Device.message.connect(_on_bus_message)
 	_bind_ok = _udp.bind(udp_port) == OK
 	if not _bind_ok:
 		push_warning("WindInput: could not bind UDP port %d, network wind disabled" % udp_port)
@@ -71,6 +82,24 @@ func _process(delta: float) -> void:
 	current_direction = current_direction.normalized().slerp(_target_direction.normalized(), t).normalized()
 
 	wind_changed.emit(current_speed, current_direction)
+
+
+## Telemetry from anywhere on the bus. Two fields make it an anemometer.
+func _on_bus_message(_topic: String, payload: String) -> void:
+	var data: Variant = JSON.parse_string(payload)
+	if not (data is Dictionary) or not data.has("wind_speed"):
+		return
+	set_wind(float(data["wind_speed"]), float(data.get("wind_direction", 0.0)))
+
+
+## Wind set by hand from the dashboard (the WIND command). Feeds the same two
+## targets as the anemometer, so a slider simply wins until the next real
+## reading arrives -- and if the anemometer is silent, it holds.
+func set_wind(speed_ms: float, direction_deg: float) -> void:
+	_target_speed = clamp(speed_ms, 0.0, max_speed_ms)
+	var rad := deg_to_rad(direction_deg)
+	_target_direction = Vector2(sin(rad), cos(rad))
+	_last_packet_time = _time
 
 
 func _read_udp_packets() -> void:
@@ -130,6 +159,14 @@ func _simulate(delta: float) -> void:
 	var gust: float = _noise.get_noise_1d(_time * 8.0) * 0.5 + 0.5
 	_target_speed = 1.2 + gust * 5.5
 	_target_direction = Vector2.from_angle(deg_to_rad(_sim_dir_deg))
+
+
+## Is a real reading arriving, as opposed to the simulated fallback breeze?
+## Pilot needs the difference: a reported wind of zero is dead calm and should
+## still drift, but NO reading at all means we do not know anything and should
+## wait rather than invent movement.
+func is_live() -> bool:
+	return (_time - _last_packet_time) <= silence_timeout_sec
 
 
 ## Convenience for other scripts/UI: 0..1 normalized speed.

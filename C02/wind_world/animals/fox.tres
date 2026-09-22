@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="AnimalConfig" format=3 uid="uid://call0ta1ivvli"]
+
+[ext_resource type="Script" uid="uid://bxm4vwmas71ko" path="res://scripts/animal_config.gd" id="1"]
+[ext_resource type="PackedScene" uid="uid://c45q36a1atrxp" path="res://assets/models/animals/Fox.gltf" id="2"]
+
+[resource]
+script = ExtResource("1")
+species_name = "zorro"
+model = ExtResource("2")
+anim_idle = PackedStringArray("Idle", "Idle_2", "Idle_2_HeadLow")
+scale_min = 0.33
+scale_max = 0.4
+model_yaw_offset_deg = 180.0
+spawn_interval = Vector2(8, 22)
+spawn_angle_deg = Vector2(6, 38)
+spawn_distance = Vector2(38, 75)
+recolor = {
+"Main": Color(0.38, 0.34, 0.27, 1)
+}

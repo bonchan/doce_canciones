@@ -9,12 +9,14 @@ extends Resource
 enum Source {
 	AUTO,   ## nobody steers; the wind carries us (the original behaviour)
 	MOUSE,  ## left-drag turns, wheel sets speed
-	SERIAL, ## MPU-6050 over USB via ImuInput
-	MQTT,   ## same numbers over the network -- NOT IMPLEMENTED YET
+	SERIAL, ## MPU-6050 on the plank, over USB via ImuInput
+	MQTT,   ## carried by the anemometer on the bus -- see the MQTT group below
 }
 
-@export var source: Source = Source.MOUSE
-## Keep the mouse working even when source is SERIAL/MQTT. Handy while
+## MQTT by default: in the gallery the piece is driven by the wind readings on
+## the bus. It drops to AUTO by itself while the broker is unreachable.
+@export var source: Source = Source.MQTT
+## Keep the mouse working even when the source is SERIAL. Handy while
 ## building; turn it off for the installation so a stray mouse can't hijack it.
 @export var allow_mouse_override: bool = true
 
@@ -58,6 +60,27 @@ enum Source {
 ## Gentler near centre, so you can trim the speed in small amounts once you
 ## are up to pace instead of slamming between stop and full.
 @export_range(1.0, 4.0) var speed_expo: float = 2.0
+
+@export_group("MQTT (driven by the wind on the bus)")
+## Travel downwind: the heading swings to follow the wind direction the
+## anemometer reports. Off, and MQTT only controls speed, not where you go.
+@export var mqtt_follow_wind: bool = true
+## Degrees per second the heading swings toward the wind. The wind is an
+## absolute bearing, not a nudge, so this is what stops it snapping round.
+@export var mqtt_turn_rate_deg: float = 12.0
+## Wind speed (m/s) that means full throttle.
+@export var mqtt_full_wind: float = 14.0
+@export var mqtt_max_throttle: float = 3.0
+## Dead calm should not mean a frozen picture. This is the drift that remains
+## when the anemometer reads 0 -- as slow as it can be while still being
+## alive. Raise it if a becalmed world looks like a crashed one.
+@export_range(0.0, 1.0) var mqtt_min_throttle: float = 0.07
+## No readings at all is different from a reading of zero: nothing on the
+## topic means we genuinely do not know, so we stand still and wait.
+@export var mqtt_stop_when_silent: bool = true
+## While the broker is unreachable, fall back to this rather than standing
+## still forever. AUTO is the simulated breeze the piece ships with.
+@export var mqtt_offline_fallback: Source = Source.AUTO
 
 @export_group("Plank filtering")
 ## Higher = the plank reacts faster, but transfers more of your footsteps.

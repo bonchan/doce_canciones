@@ -37,6 +37,7 @@ extends Node3D
 ##   F4  blend to the next preset
 ##   0   auto-cycle presets on/off (every auto_cycle_seconds)
 ##   F5  cycle steering source   F6  re-zero the plank
+##   SPACE spawn an animal right in front of you (see scripts/animal_field.gd)
 ##
 ## STEERING
 ##   Where we travel comes from Pilot (scripts/pilot_input.gd), which is fed by
@@ -55,6 +56,22 @@ const FIXED_PROPS := ["terrain_size", "terrain_subdivisions", "field_tile_size",
 
 ## The starting look. Falls back to 1_meadow.tres when empty.
 @export var config: WorldConfig
+## Wildlife. One AnimalConfig per species; see scripts/animal_field.gd. Empty
+## for an empty land.
+@export var animals: Array[AnimalConfig] = [
+	preload("res://animals/fox.tres"),
+	preload("res://animals/wolf.tres"),
+	preload("res://animals/deer.tres"),
+	preload("res://animals/stag.tres"),
+	preload("res://animals/alpaca.tres"),
+	preload("res://animals/cow.tres"),
+	preload("res://animals/bull.tres"),
+	preload("res://animals/horse.tres"),
+	preload("res://animals/horse_white.tres"),
+	preload("res://animals/donkey.tres"),
+	preload("res://animals/husky.tres"),
+	preload("res://animals/shibainu.tres"),
+]
 @export var heading_smoothing: float = 3.0 ## higher = heading follows the steering faster
 ## Drift through the presets on its own, one blend every this many seconds.
 ## 0 = off. Key 0 toggles it at runtime.
@@ -86,6 +103,7 @@ var _heading_target: float = 0.0
 var canyon_walls: float = 0.0
 var _canyon_following: bool = false
 var _canyon_timer: float = 0.0
+var _animals: AnimalField
 var _field_tile: float
 var _terrain_cell: float
 var _terrain_mi: MeshInstance3D
@@ -127,6 +145,12 @@ var _interest_pitch: float = 0.0
 
 var _hud: Label
 var _hud_timer: float = 0.0
+## Both come from [display] in config.cfg, and both can be flipped at runtime
+## by F1-F3 or by the DISPLAY command.
+var show_primitives: bool = false
+var show_hud: bool = false
+var _ident: Label ## the big IDENTIFY overlay
+var _ident_left: float = 0.0
 
 
 func _init() -> void:
@@ -147,6 +171,8 @@ func _ready() -> void:
 		if p.type in [TYPE_FLOAT, TYPE_INT, TYPE_COLOR, TYPE_VECTOR3]:
 			_lerp_props.append(p.name)
 	_auto_on = auto_cycle_seconds > 0.0
+	show_primitives = Device.setting("display", "primitives", false)
+	show_hud = Device.setting("display", "hud", false)
 
 	# Tile sizes that divide WRAP_PERIOD exactly, so nothing jumps when
 	# scroll_offset wraps around.
@@ -176,8 +202,13 @@ func _ready() -> void:
 	_apply_live()
 	_build_props()
 	_build_camera()
+	_build_animals()
 	_build_hud()
 	WindInput.wind_changed.connect(_on_wind_changed)
+	Device.collect_telemetry.connect(_on_collect_telemetry)
+	Device.identify.connect(_on_identify)
+	Device.command.connect(_on_device_command)
+	Device.collect_announce.connect(_on_collect_announce)
 
 
 func _process(delta: float) -> void:
@@ -190,6 +221,7 @@ func _process(delta: float) -> void:
 	_update_auto_cycle(delta)
 
 	# Steering: mouse, plank over serial, or nobody. See scripts/pilot_input.gd.
+	Pilot.world_heading = heading  # the wind gives an absolute bearing
 	_heading_target += Pilot.heading_delta
 	speed_multiplier = Pilot.throttle
 	# The land gets a say too, but only a nudge -- the pilot always wins.
@@ -220,6 +252,12 @@ func _process(delta: float) -> void:
 	_update_props(delta)
 	_update_camera(delta)
 	_update_hud(delta)
+	if _ident_left > 0.0:
+		_ident_left -= delta
+		# Pulse, so it reads as "this one" across a room.
+		_ident.modulate.a = 0.55 + 0.45 * sin(_t * 9.0)
+		if _ident_left <= 0.0:
+			_ident.visible = false
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -236,6 +274,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		start_transition(preset_for_number(k - KEY_KP_0))
 		return
 	match k:
+		KEY_SPACE:
+			if _animals:
+				_animals.spawn_now()
+			else:
+				print("[animals] no AnimalField -- the World node's `animals` array is empty")
 		KEY_0, KEY_KP_0:
 			_auto_on = not _auto_on
 			_auto_timer = 0.0
@@ -367,6 +410,38 @@ func ground_height(world_p: Vector2) -> float:
 	if not _transitioning or _blend <= 0.0:
 		return ha
 	return lerp(ha, _height_for(_to, world_p), _blend)
+
+
+## Swapping this rebuilds the prop pools, then re-seats every prop where it
+## already stands so the change is visible at once rather than trickling in as
+## they happen to recycle.
+func set_primitives(on: bool) -> void:
+	if on == show_primitives:
+		return
+	show_primitives = on
+	_pools.clear()
+	for p in _props:
+		if p.active:
+			_respawn_prop(p, _prop_offset(p))
+	print("[display] primitives ", "on" if on else "off")
+
+
+func set_hud(on: bool) -> void:
+	show_hud = on
+	if _hud:
+		_hud.visible = on
+
+
+# -------------------------------------------------------------------- animals
+
+func _build_animals() -> void:
+	if animals.is_empty():
+		return
+	_animals = AnimalField.new()
+	_animals.name = "Animals"
+	_animals.species = animals
+	add_child(_animals)
+	_animals.setup(self)
 
 
 # -------------------------------------------------------------------- canyons
@@ -848,7 +923,18 @@ func _make_prop_mesh(shape: String) -> Array:
 func _shape_entries(shapes: PackedStringArray, cache: Dictionary) -> Array:
 	var out := []
 	var seen := {}
-	for shape in shapes:
+	# With primitives off, keep only the real plants. A preset made ENTIRELY of
+	# primitives would be left with nothing to scatter, so in that case we let
+	# them through rather than emptying the land.
+	var wanted := shapes
+	if not show_primitives:
+		var plants_only: PackedStringArray = []
+		for shape in shapes:
+			if Plants.KINDS.has(shape):
+				plants_only.append(shape)
+		if not plants_only.is_empty():
+			wanted = plants_only
+	for shape in wanted:
 		if Plants.KINDS.has(shape):
 			var n: int = seen.get(shape, 0)
 			seen[shape] = n + 1
@@ -1249,7 +1335,7 @@ func _build_hud() -> void:
 	_hud.add_theme_color_override("font_color", Color(1, 1, 1))
 	_hud.add_theme_color_override("font_outline_color", Color(0, 0, 0))
 	_hud.add_theme_constant_override("outline_size", 5)
-	_hud.visible = false
+	_hud.visible = show_hud  # [display] hud in config.cfg; F3 toggles
 	layer.add_child(_hud)
 
 
@@ -1276,24 +1362,113 @@ func _update_hud(delta: float) -> void:
 		"travel  %.1f m/s  (x%.2f)   heading %d°   %s" % [forward_speed, speed_multiplier, int(fposmod(rad_to_deg(-heading), 360.0)), _steering_text()],
 		"camera  %.1f m above ground   pitch %.1f°   watching %s (%d specials around)" % [_cam_y - ground_height(scroll_offset), rad_to_deg(_cam_pitch), "yes" if not _interest.is_empty() else "no", n_special],
 		"canyon  walls %+.1f m   %s" % [canyon_walls, ("following, %ds left" % int(_canyon_timer)) if _canyon_following else (("open, next in %ds" % int(_canyon_timer)) if _canyon_timer > 0.0 else "open, watching")],
+		"animals  %s" % (_animals.describe() if _animals else "off"),
 		"particles %d" % n_particles,
 		"",
 		"F1 wireframe [%s]   F2 grass/flowers [%s]   F3 hud   1-9 / F4 preset   0 auto-cycle" % ["on" if wire else "off", "on" if _grass_mmi.visible else "off"],
-		"F5 steering source   F6 re-zero plank   drag: heading   wheel: speed   +/- wind speed   arrows/WASD wind direction",
+		"F5 steering source   F6 re-zero plank   SPACE spawn animal   drag: heading   wheel: speed   +/- wind speed   arrows/WASD wind direction",
 	])
 
 
 ## "steering mouse" / "steering serial [no port]" / "steering serial (calibrating)".
 func _steering_text() -> String:
-	var s := "steering " + Pilot.source_name()
-	if Pilot.config.source == PilotConfig.Source.SERIAL:
-		if not ImuInput.connected:
-			s += " [no port]"
-		elif ImuInput.is_calibrating():
-			s += " (hold still)"
-		else:
-			s += "  stick (%+.2f, %+.2f)" % [Pilot.stick.x, Pilot.stick.y]
+	var s := "steering " + Pilot.active_source_name()
+	#if Pilot.config.source == PilotConfig.Source.SERIAL:
+		#if not ImuInput.connected:
+			#s += " [no port]"
+		#elif ImuInput.is_calibrating():
+			#s += " (hold still)"
+		#else:
+			#s += "  stick (%+.2f, %+.2f)" % [Pilot.stick.x, Pilot.stick.y]
 	return s
+
+
+## IDENTIFY: the ESP32s blink their LED. A screen can do better -- name itself,
+## big, in the middle, for however long the brain asked.
+func _on_identify(duration: float) -> void:
+	if _ident == null:
+		_ident = Label.new()
+		_ident.add_theme_font_size_override("font_size", 64)
+		_ident.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+		_ident.add_theme_constant_override("outline_size", 12)
+		_ident.set_anchors_preset(Control.PRESET_CENTER)
+		_ident.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_ident.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		_ident.grow_vertical = Control.GROW_DIRECTION_BOTH
+		_hud.get_parent().add_child(_ident)
+	_ident.text = "%s
+%s / %s" % [Device.device_name, Device.zone, Device.device_id]
+	_ident.visible = true
+	_ident_left = maxf(duration, 0.5)
+	print("[device] IDENTIFY for %.1fs" % _ident_left)
+
+
+## The capabilities we announce, beyond IDENTIFY. Keep SUBSCRIBES in
+## scripts/mqtt_device.gd in step with what is actually handled here.
+func _on_device_command(capability: String, params: Dictionary) -> void:
+	match capability:
+		"PRESET":
+			# {"n": 3} or {"name": "3_estepa"}
+			if params.has("n"):
+				start_transition(preset_for_number(int(params["n"])))
+			elif params.has("name"):
+				start_transition(CONFIG_DIR + str(params["name"]) + ".tres")
+		"PILOT":
+			# {"source": "mqtt" | "auto" | "mouse" | "serial"}
+			var want := str(params.get("source", "")).to_upper()
+			var names := PilotConfig.Source.keys()
+			if want in names:
+				Pilot.set_source(names.find(want))
+			else:
+				print("[device] PILOT: unknown source ", want, " -- have ", names)
+		"DISPLAY":
+			# {"hud": true, "primitives": false} -- either, or both.
+			if params.has("hud"):
+				set_hud(bool(params["hud"]))
+			if params.has("primitives"):
+				set_primitives(bool(params["primitives"]))
+		"WIND":
+			# {"speed": 6.5, "direction": 225} -- the dashboard sliders.
+			WindInput.set_wind(
+					float(params.get("speed", WindInput.current_speed)),
+					float(params.get("direction", rad_to_deg(WindInput.current_direction.angle()))))
+		"SPAWN":
+			# {"species": "zorro"} or {} for whatever turns up. Same thing the
+			# spacebar does, so the dashboard can put an animal in front of you
+			# from the other side of the gallery.
+			if _animals:
+				_animals.spawn_now(str(params.get("species", "")))
+
+
+## A dashboard cannot offer a preset or a species it has never heard of, so we
+## advertise both in the announce and it builds its controls from that. Same
+## trick the polargraph uses to publish its geometry.
+func _on_collect_announce(into: Dictionary) -> void:
+	var names: PackedStringArray = []
+	for path in list_presets():
+		names.append(path.get_file().get_basename())
+	into["presets"] = names
+	var species: PackedStringArray = []
+	for a in animals:
+		if a != null:
+			species.append(a.species_name)
+	into["species"] = species
+
+
+## What this device reports on installation/<zone>/<id>/telemetry, once a
+## second, same as any sensor on the bus.
+func _on_collect_telemetry(into: Dictionary) -> void:
+	into["speed"] = snappedf(forward_speed, 0.01)
+	into["heading"] = int(fposmod(rad_to_deg(-heading), 360.0))
+	into["preset"] = _from.resource_path.get_file().get_basename()
+	into["pilot"] = Pilot.source_name()
+	into["pilot_active"] = Pilot.active_source_name()
+	into["hud"] = show_hud
+	into["primitives"] = show_primitives
+	into["wind"] = snappedf(WindInput.current_speed, 0.01)
+	into["wind_dir"] = int(fposmod(rad_to_deg(WindInput.current_direction.angle()), 360.0))
+	if _animals:
+		into["animals"] = _animals.alive_count()
 
 
 func _on_wind_changed(_speed: float, _direction: Vector2) -> void:

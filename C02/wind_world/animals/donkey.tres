@@ -1,0 +1,48 @@
+[gd_resource type="Resource" script_class="AnimalConfig" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/animal_config.gd" id="1"]
+[ext_resource type="PackedScene" uid="uid://cd0oahk6tgm6t" path="res://assets/models/animals/Donkey.gltf" id="2"]
+
+[resource]
+script = ExtResource("1")
+species_name = "burro"
+model = ExtResource("2")
+anim_idle = PackedStringArray("Idle", "Idle_2", "Idle_Headlow")
+anim_eat = "Eating"
+anim_walk = "Walk"
+anim_run = "Gallop"
+anim_jump = "Gallop_Jump"
+anim_land = "Jump_toIdle"
+anim_watch = "Idle"
+anim_blend = 0.25
+scale_min = 0.625
+scale_max = 0.734
+model_yaw_offset_deg = 180.0
+walk_speed = 0.8
+run_speed = 6.0
+accel = 5.0
+turn_rate_deg = 110.0
+idle_time = Vector2(3, 8)
+eat_time = Vector2(6, 16)
+walk_time = Vector2(5, 14)
+run_time = Vector2(2, 5)
+want_walk = 18.0
+want_eat = 52.0
+want_idle = 26.0
+want_run = 0.0
+jump_chance = 0.0
+social_chance = 0.45
+social_range = 70.0
+social_personal_space = 6.0
+flee_distance = 0.0
+flee_release = 2.2
+flee_speed_boost = 1.15
+watch_distance = 38.0
+watch_turn_rate_deg = 28.0
+max_alive = 2
+spawn_interval = Vector2(10, 26)
+spawn_angle_deg = Vector2(6, 38)
+spawn_distance = Vector2(38, 78)
+despawn_distance = 170.0
+despawn_behind = 45.0
+coat_jitter = 0.06

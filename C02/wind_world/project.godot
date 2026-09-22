@@ -22,6 +22,7 @@ config/icon="res://icon.svg"
 
 [autoload]
 
+Device="*res://scripts/mqtt_device.gd"
 WindInput="*res://scripts/wind_input.gd"
 ImuInput="*res://scripts/imu_input.gd"
 Pilot="*res://scripts/pilot_input.gd"
