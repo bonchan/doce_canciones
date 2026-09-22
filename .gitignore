@@ -16,3 +16,7 @@ androidtools
 core/android/build/
 
 .DS_Store
+
+.external
+
+android
