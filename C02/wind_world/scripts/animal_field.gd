@@ -37,9 +37,12 @@ const ST_WATCH := 7
 ## (F3) only shows the current state; this is the history.
 @export var log_events: bool = true
 ## Roughly the camera's horizontal half-FOV, only used to say "on screen" or
-## "off to the side" in the log. A 65-degree vertical FOV on a 16:9 window is
-## about 97 across, so ~48 either side.
-@export var view_half_angle_deg: float = 48.0
+## "off to the side" in the log and the HUD. camera_fov is VERTICAL, so the
+## horizontal view follows the window aspect: a 65-degree FOV spans ~97 across
+## a 16:9 window but only ~81 across the 4:3 one this runs on, hence ~40 either
+## side. Worth correcting if the display changes shape, or the log will call
+## an animal on screen when it is just past the edge.
+@export var view_half_angle_deg: float = 40.0
 
 var _world: Node3D ## the World node: scroll_offset, travel_dir, ground_height()
 var _alive: Array[Dictionary] = []
@@ -497,6 +500,17 @@ func _find_meshes(n: Node, out: Array[MeshInstance3D] = []) -> Array[MeshInstanc
 	for ch in n.get_children():
 		_find_meshes(ch, out)
 	return out
+
+
+## The ground just split open. Everything runs, including the ones that are
+## normally too placid to run from anything -- a cow will not stand and watch
+## a fissure the way it stands and watches you.
+func panic() -> void:
+	for a in _alive:
+		if a.state != ST_FLEE:
+			_enter(a, ST_FLEE)
+	if not _alive.is_empty():
+		_log("%d animal(s) bolting -- the ground is opening" % _alive.size())
 
 
 func alive_count() -> int:

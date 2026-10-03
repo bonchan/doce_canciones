@@ -160,6 +160,39 @@ uniform vec3 terrain_b1 = vec3(25.0, 2.5, 0.0);
 uniform vec3 terrain_b2 = vec3(0.0, 0.0, 0.35);
 uniform float terrain_blend : hint_range(0.0, 1.0) = 0.0;
 
+// ---------------------------------------------------------------------------
+// ALTER -- the world cracks open, the void shows through, petrol wells up.
+//
+// Driven by one 0..1 value from world.gd. Deliberately NOT part of w_ground():
+// the CPU mirror in terrain_noise.gd does not know about cracks, and that is
+// on purpose -- the camera has to sail over the disaster rather than drop 40 m
+// into it. Props and animals get the drop applied separately, so the land
+// tears open and takes the vegetation with it while the view keeps flying.
+uniform float alter : hint_range(0.0, 1.0) = 0.0;
+
+const float W_CRACK_DEPTH = 46.0;
+
+// 0 on whole ground, 1 down the middle of a fissure. Every surface samples
+// this same field, so grass cannot be left hanging over a hole the terrain
+// has already opened.
+float w_crack(vec2 p) {
+	if (alter <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = p / W_WRAP_PERIOD;
+	float n = w_ridged(uv, w_cells(0.010), 3);
+	// The fissures widen as it gets worse.
+	float lo = mix(0.965, 0.780, alter);
+	return smoothstep(lo, min(lo + 0.09, 0.999), n);
+}
+
+// Metres the ground has fallen away at p. Eased so the opening accelerates
+// rather than sliding linearly.
+float w_crack_drop(vec2 p) {
+	float c = w_crack(p);
+	return c * c * alter * alter * W_CRACK_DEPTH;
+}
+
 float w_ground(vec2 p) {
 	if (terrain_blend <= 0.0) {
 		return w_terrain_height(p, terrain_a0.x, terrain_a0.y, terrain_a0.z, terrain_a0.w, terrain_a1.x, terrain_a1.y, terrain_a1.z, terrain_a2.x, terrain_a2.y, terrain_a2.z);

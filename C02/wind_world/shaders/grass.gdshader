@@ -46,6 +46,14 @@ void vertex() {
 	VERTEX.xz += correction;
 	VERTEX.y += ground_h;
 
+	// ALTER: the ground under this one is falling away, so it goes with it --
+	// and once the fissure has really opened it is gone, rather than left
+	// standing on nothing.
+	float crack = w_crack(world_p);
+	VERTEX.y -= w_crack_drop(world_p);
+	float swallowed = smoothstep(0.12, 0.45, crack);
+	VERTEX.y = mix(VERTEX.y, ground_h - w_crack_drop(world_p), swallowed);
+
 	// Bend: UV.y = 0 at the root (no bend), 1 at the tip (full bend).
 	float bend_amount = UV.y * UV.y;
 	float gust = w_noise(world_p * 0.15 + vec2(TIME * time_scale * 0.6, 0.0)) * 0.6 + 0.7;

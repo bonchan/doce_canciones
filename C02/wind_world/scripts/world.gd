@@ -36,13 +36,14 @@ extends Node3D
 ##   1-9 blend to preset res://configs/<n>_name.tres (top row or keypad)
 ##   F4  blend to the next preset
 ##   0   auto-cycle presets on/off (every auto_cycle_seconds)
-##   F5  cycle steering source   F6  re-zero the plank
+##   F   fullscreen on/off
+##   F5  cycle steering source
 ##   SPACE spawn an animal right in front of you (see scripts/animal_field.gd)
 ##
 ## STEERING
 ##   Where we travel comes from Pilot (scripts/pilot_input.gd), which is fed by
-##   the mouse, by the plank over serial, or by nothing at all -- this script
-##   only reads Pilot.heading_delta / Pilot.throttle and doesn't care which.
+##   the mouse, by the wind on the MQTT bus, or by nothing at all -- this
+##   script only reads Pilot.heading_delta / Pilot.throttle, not which.
 
 const WRAP_PERIOD: float = 8192.0  # MUST match W_WRAP_PERIOD in common.gdshaderinc
 const CONFIG_DIR := "res://configs/"
@@ -94,7 +95,7 @@ var _lerp_props: Array = []
 var _auto_timer: float = 0.0
 var _auto_on: bool = false
 
-## Whatever Pilot is steering with (mouse, plank, nothing) lands here.
+## Whatever Pilot is steering with (wind, mouse, nothing) lands here.
 var speed_multiplier: float = 1.0
 var _heading_target: float = 0.0
 
@@ -147,6 +148,24 @@ var _hud: Label
 var _hud_timer: float = 0.0
 ## Both come from [display] in config.cfg, and both can be flipped at runtime
 ## by F1-F3 or by the DISPLAY command.
+## ALTER: 0 = the world is fine, 1 = fully cracked open and flooded. Eased,
+## never snapped -- the whole point is that it is a process.
+var alter_amount: float = 0.0
+var _alter_left: float = 0.0
+var _alter_total: float = 0.0
+var _vent_gap: float = 0.0
+var _vents: Array[Dictionary] = []
+## The grass field is by far the most expensive thing here: every blade is 24
+## vertices and EVERY vertex evaluates the terrain noise, so 22000 blades cost
+## roughly three times the whole terrain mesh. Off, none of it is built at all
+## -- no instances, no material, no draw. The coiron props still carry some of
+## the same texture, so the ground does not read as bare.
+## Seconds of stillness before the pointer disappears. 0 leaves it on screen.
+## A cursor parked in the middle of a projected landscape is the one thing that
+## tells everyone it is a computer.
+var cursor_hide_after: float = 2.0
+var _cursor_idle: float = 0.0
+var show_grass: bool = true
 var show_primitives: bool = false
 var show_hud: bool = false
 var _ident: Label ## the big IDENTIFY overlay
@@ -160,6 +179,18 @@ func _init() -> void:
 
 
 func _ready() -> void:
+	# config.cfg wins over whatever the scene has assigned. The scene file is
+	# owned by the editor -- it rewrites it from memory on save, so an edit
+	# there does not survive -- and this way the gallery machine and a
+	# development one can start on different worlds from the same build.
+	var want: String = str(Device.setting("display", "preset", ""))
+	if not want.is_empty():
+		var path: String = CONFIG_DIR + want + ".tres"
+		if ResourceLoader.exists(path):
+			config = load(path)
+			print("[display] starting preset: ", want)
+		else:
+			push_warning("[display] no preset called %s at %s" % [want, path])
 	if config == null:
 		config = load(DEFAULT_CONFIG)
 	_from = config
@@ -171,8 +202,12 @@ func _ready() -> void:
 		if p.type in [TYPE_FLOAT, TYPE_INT, TYPE_COLOR, TYPE_VECTOR3]:
 			_lerp_props.append(p.name)
 	_auto_on = auto_cycle_seconds > 0.0
+	show_grass = Device.setting("display", "grass", true)
+	cursor_hide_after = float(Device.setting("display", "hide_cursor_after", 2.0))
 	show_primitives = Device.setting("display", "primitives", false)
 	show_hud = Device.setting("display", "hud", false)
+	if Device.setting("display", "fullscreen", false):
+		set_fullscreen(true)
 
 	# Tile sizes that divide WRAP_PERIOD exactly, so nothing jumps when
 	# scroll_offset wraps around.
@@ -202,6 +237,7 @@ func _ready() -> void:
 	_apply_live()
 	_build_props()
 	_build_camera()
+	_build_vents()
 	_build_animals()
 	_build_hud()
 	WindInput.wind_changed.connect(_on_wind_changed)
@@ -220,8 +256,11 @@ func _process(delta: float) -> void:
 	_update_transition(delta)
 	_update_auto_cycle(delta)
 
-	# Steering: mouse, plank over serial, or nobody. See scripts/pilot_input.gd.
+	# Steering: the wind off the bus, the mouse, or nobody at all.
 	Pilot.world_heading = heading  # the wind gives an absolute bearing
+	# What we would travel at on full throttle. Pilot divides by this so a
+	# source can ask for a speed in m/s and actually get it.
+	Pilot.world_base_speed = c.forward_speed_base + WindInput.current_speed * c.scroll_speed_scale
 	_heading_target += Pilot.heading_delta
 	speed_multiplier = Pilot.throttle
 	# The land gets a say too, but only a nudge -- the pilot always wins.
@@ -237,21 +276,25 @@ func _process(delta: float) -> void:
 	scroll_offset.x = fposmod(scroll_offset.x, WRAP_PERIOD)
 	scroll_offset.y = fposmod(scroll_offset.y, WRAP_PERIOD)
 
-	_grass_mat.set_shader_parameter("scroll_offset", scroll_offset)
+	if _grass_mat:
+		_grass_mat.set_shader_parameter("scroll_offset", scroll_offset)
 	_flower_mat.set_shader_parameter("scroll_offset", scroll_offset)
 	_update_terrain_snap()
 
-	_grass_mat.set_shader_parameter("wind_dir", dir)
-	_grass_mat.set_shader_parameter("wind_speed", speed)
+	if _grass_mat:
+		_grass_mat.set_shader_parameter("wind_dir", dir)
+		_grass_mat.set_shader_parameter("wind_speed", speed)
 	_flower_mat.set_shader_parameter("wind_dir", dir)
 	_flower_mat.set_shader_parameter("wind_speed", speed)
 	_terrain_mat.set_shader_parameter("wind_speed_norm", WindInput.get_speed_normalized())
 
 	_update_particles(dir, speed)
+	_update_alter(delta)
 	_update_mood()
 	_update_props(delta)
 	_update_camera(delta)
 	_update_hud(delta)
+	_update_cursor(delta)
 	if _ident_left > 0.0:
 		_ident_left -= delta
 		# Pulse, so it reads as "this one" across a room.
@@ -261,7 +304,10 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Mouse steering lives in Pilot now, alongside the plank, so this only
+	if event is InputEventMouseMotion or event is InputEventMouseButton:
+		_wake_cursor()
+		return
+	# Mouse steering lives in Pilot now, so this only
 	# handles the look/debug keys.
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
@@ -274,6 +320,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		start_transition(preset_for_number(k - KEY_KP_0))
 		return
 	match k:
+		KEY_F:
+			set_fullscreen(not is_fullscreen())
 		KEY_SPACE:
 			if _animals:
 				_animals.spawn_now()
@@ -286,8 +334,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			var vp := get_viewport()
 			vp.debug_draw = Viewport.DEBUG_DRAW_DISABLED if vp.debug_draw == Viewport.DEBUG_DRAW_WIREFRAME else Viewport.DEBUG_DRAW_WIREFRAME
 		KEY_F2:
-			var on := not _grass_mmi.visible
-			_grass_mmi.visible = on
+			var on := not _flower_mmi.visible
+			if _grass_mmi:
+				_grass_mmi.visible = on
 			_flower_mmi.visible = on
 			_particles_visible = on
 			for e in _particles:
@@ -426,10 +475,316 @@ func set_primitives(on: bool) -> void:
 	print("[display] primitives ", "on" if on else "off")
 
 
+## Borderless fullscreen rather than exclusive: it behaves better with
+## compositors and multi-monitor setups, and alt-tabbing does not black the
+## screen. [display] fullscreen in config.cfg decides how it starts.
+func is_fullscreen() -> bool:
+	var m := DisplayServer.window_get_mode()
+	return m == DisplayServer.WINDOW_MODE_FULLSCREEN 			or m == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+
+
+func set_fullscreen(on: bool) -> void:
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on
+			else DisplayServer.WINDOW_MODE_WINDOWED)
+
+
+## Hide the pointer once it has been still a while, bring it back the instant
+## it moves. Hidden rather than captured: clicks and drags still work, so
+## mouse steering is unaffected -- it is only the arrow that goes.
+func _update_cursor(delta: float) -> void:
+	if cursor_hide_after <= 0.0:
+		return
+	_cursor_idle += delta
+	if _cursor_idle >= cursor_hide_after and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE:
+		Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
+
+
+func _wake_cursor() -> void:
+	_cursor_idle = 0.0
+	if Input.mouse_mode == Input.MOUSE_MODE_HIDDEN:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
 func set_hud(on: bool) -> void:
 	show_hud = on
 	if _hud:
 		_hud.visible = on
+
+
+# ---------------------------------------------------------------------- alter
+# ALTER, the capability every device on the bus is expected to have: "be
+# wrong for a while". Here that is the ground splitting open, the void showing
+# through, and petrol welling out of the fissures until it has covered
+# everything -- then the land closes and it drains away.
+#
+# It tears open faster than it heals, which is what makes it read as damage
+# rather than as an effect being toggled.
+
+const ALTER_OPEN := 2.2  ## seconds to reach full disaster
+const ALTER_HEAL := 5.0  ## seconds to come back
+
+
+## Duration is how long it stays at full, not counting the opening and the
+## healing either side.
+func alter(duration: float = 10.0) -> void:
+	_alter_left = maxf(duration, 0.1)
+	_alter_total = _alter_left
+	print("[alter] the world cracks open for %.1fs" % _alter_left)
+	_open_vents()
+
+
+func _update_alter(delta: float) -> void:
+	var target: float = 0.0
+	if _alter_left > 0.0:
+		_alter_left -= delta
+		target = 1.0
+	if is_equal_approx(alter_amount, target):
+		alter_amount = target
+	else:
+		var rate: float = 1.0 / (ALTER_OPEN if target > alter_amount else ALTER_HEAL)
+		alter_amount = move_toward(alter_amount, target, rate * delta)
+	for mat in [_terrain_mat, _grass_mat, _flower_mat]:
+		if mat:
+			mat.set_shader_parameter("alter", alter_amount)
+	_update_vents(delta)
+
+
+## Deliberately almost nothing. An earlier version drained the colour and
+## dimmed the sun, which just made the screen go dark and hid the very thing
+## worth looking at. The fissures and the crude coming out of them are the
+## effect; the light stays where it was.
+func _apply_alter_mood() -> void:
+	if alter_amount <= 0.0:
+		return
+	var env := _world_env.environment
+	# Only a faint haze, so the air reads as fouled rather than the picture
+	# being turned down.
+	env.fog_light_color = env.fog_light_color.lerp(Color(0.16, 0.16, 0.15), alter_amount * 0.35)
+	env.fog_density = lerp(env.fog_density, env.fog_density * 1.35, alter_amount)
+
+
+# --------------------------------------------------------------------- vents
+# Crude comes up out of the fissures under pressure: it goes UP, hangs, and
+# falls back, and the ground is stained wherever it lands. The plume is
+# particles; the stain is four uniforms the terrain shader paints with. They
+# are kept separate on purpose -- the spill has to persist long after the
+# droplet that made it has hit the ground and gone.
+
+const VENTS := 4
+const VENT_SEARCH := 230.0 ## metres ahead we look for somewhere to erupt
+const VENT_SPREAD := 42.0  ## keep them this far apart, or they read as one blot
+## A vent is chosen well ahead, then waits. It only blows once it is actually
+## on screen and close enough to read -- the eruption is the good bit, and
+## arriving at one already running wastes it.
+## Narrow on purpose. A vent armed well off to the side swings abeam as we
+## approach, so by the time it is close it is no longer in front -- it can
+## never satisfy both the distance and the view cone, and simply never fires.
+## Keeping candidates near our line means we drive straight into them.
+## The patch of ground in front of the camera a vent may blow in. Near enough
+## that you are on top of it within a few seconds, far enough that the whole
+## plume is in frame when it goes up.
+const VENT_VIEW_CONE := 24.0
+const VENT_NEAR := 45.0
+const VENT_FAR := 105.0
+## Seconds between eruptions.
+const VENT_GAP := Vector2(1.6, 3.6)
+const VENT_RETIRE := 25.0
+const STAIN_GROWTH := 5.5  ## metres per second the spill creeps outward
+const STAIN_MAX := 34.0
+
+
+func _build_vents() -> void:
+	for i in VENTS:
+		var pm := ParticleProcessMaterial.new()
+		pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+		pm.emission_sphere_radius = 1.6
+		pm.direction = Vector3(0, 1, 0)
+		pm.spread = 13.0
+		pm.initial_velocity_min = 22.0
+		pm.initial_velocity_max = 36.0
+		pm.gravity = Vector3(0, -16.0, 0)
+		# Gobbets, not mist. These are seen from 60-190 m away, so a droplet
+		# has to be metres across to be more than one pixel -- the first
+		# version used half-metre quads and was invisible from the air.
+		pm.scale_min = 0.9
+		pm.scale_max = 2.9
+		pm.damping_min = 0.0
+		pm.damping_max = 0.6
+		# Crude is not black: it is a dark brown that goes iridescent at a
+		# glancing angle. It has to start light enough to read against dark
+		# ground, then thicken toward black as it falls.
+		var ramp := Gradient.new()
+		ramp.set_color(0, Color(0.17, 0.14, 0.10, 1.0))
+		ramp.set_color(1, Color(0.022, 0.020, 0.026, 0.85))
+		var tex := GradientTexture1D.new()
+		tex.gradient = ramp
+		pm.color_ramp = tex
+
+		# A quad with no texture is a visible square. A radial alpha ramp turns
+		# each one into a soft blob with no edge of its own, so a few hundred
+		# of them read as thrown liquid rather than confetti.
+		var blob := Gradient.new()
+		blob.set_color(0, Color(1, 1, 1, 1))
+		blob.set_color(1, Color(1, 1, 1, 0))
+		blob.add_point(0.55, Color(1, 1, 1, 0.85))
+		var blob_tex := GradientTexture2D.new()
+		blob_tex.gradient = blob
+		blob_tex.fill = GradientTexture2D.FILL_RADIAL
+		blob_tex.fill_from = Vector2(0.5, 0.5)
+		blob_tex.fill_to = Vector2(1.0, 0.5)
+		blob_tex.width = 64
+		blob_tex.height = 64
+
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(1, 1, 1)
+		mat.albedo_texture = blob_tex
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		# Without this the colour ramp above is thrown away and every droplet
+		# renders in the flat albedo instead.
+		mat.vertex_color_use_as_albedo = true
+		mat.roughness = 0.14
+		mat.metallic = 0.75
+		mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+		# A little glow, so the plume separates from the land behind it rather
+		# than merging into the dark ground it just came out of.
+		mat.emission_enabled = true
+		mat.emission = Color(0.10, 0.075, 0.045)
+		mat.emission_energy_multiplier = 0.28
+
+		var mesh := QuadMesh.new()
+		mesh.size = Vector2(1.7, 1.7)
+		mesh.material = mat
+
+		var node := GPUParticles3D.new()
+		node.process_material = pm
+		node.draw_pass_1 = mesh
+		node.amount = 420
+		node.lifetime = 4.2
+		node.emitting = false
+		node.visible = false
+		node.local_coords = false
+		# The plume is thrown well clear of its own origin, so let it keep
+		# drawing when the vent itself has gone off the edge of the view.
+		node.extra_cull_margin = 80.0
+		add_child(node)
+		_vents.append({"node": node, "world": Vector2.ZERO, "stain": 0.0,
+			"blown": false})
+
+
+## Blow a vent, right now, where you can see it.
+##
+## An earlier version armed them far ahead and waited for you to arrive. That
+## reads better in principle but almost never fired: a spot off to the side
+## swings abeam as you approach, so it is never both close AND in front, and
+## a spot on your exact line needs a fissure there, which -- at four percent
+## ground cover -- there usually is not. The result was you passing through
+## spills that had erupted unseen. Erupting in view, on a timer, is simpler
+## and it is what was actually asked for.
+func _blow_vent() -> bool:
+	var slot: Dictionary = {}
+	for v in _vents:
+		if not v.blown:
+			slot = v
+			break
+	if slot.is_empty():
+		return false
+
+	# Straight down the middle of what the camera is looking at.
+	var look: float = heading + _gaze_yaw
+	var fwd := Vector2(-sin(look), -cos(look))
+	var perp := Vector2(fwd.y, -fwd.x)
+	var spread: float = tan(deg_to_rad(VENT_VIEW_CONE))
+
+	# Take the deepest fissure in the visible patch, but settle for whatever is
+	# there. Crude coming up through a hairline fracture in whole ground is no
+	# less alarming than one out of an open fissure, and waiting for a perfect
+	# spot is what left the event silent for ten seconds at a time.
+	var best := Vector2.ZERO
+	var best_score: float = -1.0
+	var d: float = VENT_NEAR
+	while d <= VENT_FAR:
+		var half: float = d * spread
+		for k in 5:
+			var p: Vector2 = scroll_offset + fwd * d + perp * lerpf(-half, half, float(k) / 4.0)
+			var score: float = TerrainNoise.crack(p, 1.0)
+			if score <= best_score:
+				continue
+			var clear := true
+			for other in _vents:
+				if other.blown and other.world.distance_to(p) < VENT_SPREAD:
+					clear = false
+					break
+			if clear:
+				best_score = score
+				best = p
+		d += 6.0
+	if best_score < 0.0:
+		return false
+
+	slot.world = best
+	slot.blown = true
+	slot.stain = 0.0
+	slot.node.visible = true
+	slot.node.restart()
+	slot.node.emitting = true
+	print("[alter] a vent blows %dm ahead" % int((best - scroll_offset).length()))
+	return true
+
+
+func _open_vents() -> void:
+	if _vents.is_empty():
+		return
+	for v in _vents:
+		v.blown = false
+		v.stain = 0.0
+		v.node.emitting = false
+		v.node.visible = false
+	_vent_gap = 0.0  # one straight away, so the command visibly does something
+
+
+func _update_vents(delta: float) -> void:
+	if _vents.is_empty() or _terrain_mat == null:
+		return
+	var erupting: bool = _alter_left > 0.0
+
+	# A new one every couple of seconds, for as long as the event lasts. This
+	# is what spreads the eruptions across a thirty second ALTER instead of
+	# firing them all in the first five.
+	if erupting:
+		_vent_gap -= delta
+		if _vent_gap <= 0.0:
+			_vent_gap = _rng.randf_range(VENT_GAP.x, VENT_GAP.y) if _blow_vent() else 0.8
+
+	for i in _vents.size():
+		var v: Dictionary = _vents[i]
+		var g := Vector4.ZERO
+		if v.blown:
+			var d: Vector2 = v.world - scroll_offset
+			if erupting:
+				v.stain = minf(v.stain + STAIN_GROWTH * delta, STAIN_MAX)
+				# Once it is behind us and off screen, recycle the slot so
+				# another can blow ahead. With only four, spent plumes sitting
+				# out of sight would starve the rest of the event.
+				if -d.dot(travel_dir) > VENT_RETIRE:
+					v.blown = false
+					v.node.emitting = false
+					v.node.visible = false
+					_terrain_mat.set_shader_parameter("geyser_%d" % i, Vector4.ZERO)
+					continue
+			else:
+				v.node.emitting = false
+				if alter_amount <= 0.001:
+					v.blown = false
+					v.node.visible = false
+			d.x = wrapf(d.x, -WRAP_PERIOD * 0.5, WRAP_PERIOD * 0.5)
+			d.y = wrapf(d.y, -WRAP_PERIOD * 0.5, WRAP_PERIOD * 0.5)
+			# Erupt from down inside the fissure, not off the surface that used
+			# to be there.
+			var y: float = ground_height(v.world) - TerrainNoise.crack_drop(v.world, alter_amount) + 1.0
+			v.node.position = Vector3(d.x, y, d.y)
+			g = Vector4(v.world.x, v.world.y, v.stain, clampf(alter_amount * 1.4, 0.0, 1.0))
+		_terrain_mat.set_shader_parameter("geyser_%d" % i, g)
 
 
 # -------------------------------------------------------------------- animals
@@ -534,13 +889,14 @@ func _apply_live() -> void:
 	_terrain_mat.set_shader_parameter("contour_width", c.terrain_contour_width)
 	_terrain_mat.set_shader_parameter("line_pulse", c.terrain_line_pulse)
 
-	_grass_mat.set_shader_parameter("bend_strength", c.grass_bend_strength)
-	_grass_mat.set_shader_parameter("color_base", c.grass_color_base)
-	_grass_mat.set_shader_parameter("color_tip", c.grass_color_tip)
-	_grass_mat.set_shader_parameter("tip_emission", c.grass_tip_emission)
-	_grass_mat.set_shader_parameter("height_min", c.grass_height_min)
-	_grass_mat.set_shader_parameter("height_max", c.grass_height_max)
-	_grass_mmi.multimesh.visible_instance_count = clampi(c.grass_count, 0, _grass_max)
+	if _grass_mat:
+		_grass_mat.set_shader_parameter("bend_strength", c.grass_bend_strength)
+		_grass_mat.set_shader_parameter("color_base", c.grass_color_base)
+		_grass_mat.set_shader_parameter("color_tip", c.grass_color_tip)
+		_grass_mat.set_shader_parameter("tip_emission", c.grass_tip_emission)
+		_grass_mat.set_shader_parameter("height_min", c.grass_height_min)
+		_grass_mat.set_shader_parameter("height_max", c.grass_height_max)
+		_grass_mmi.multimesh.visible_instance_count = clampi(c.grass_count, 0, _grass_max)
 
 	_flower_mat.set_shader_parameter("bend_strength", c.flower_bend_strength)
 	_flower_mat.set_shader_parameter("scale_min", c.flower_scale_min)
@@ -620,6 +976,7 @@ func _update_mood() -> void:
 	_sun.light_energy = lerp(c.sun_energy_calm, c.sun_energy_windy, n)
 	_sun.light_color = c.sun_color
 	_sun.rotation_degrees = c.sun_rotation_deg
+	_apply_alter_mood()
 
 
 # --------------------------------------------------------------------- terrain
@@ -687,6 +1044,9 @@ func _build_blade_mesh(segments: int = 4, base_width: float = 0.05) -> ArrayMesh
 
 
 func _build_grass() -> void:
+	if not show_grass:
+		print("[display] grass off -- not building the field")
+		return
 	_grass_mat = ShaderMaterial.new()
 	_grass_mat.shader = load("res://shaders/grass.gdshader")
 	_grass_mat.set_shader_parameter("tile_size", _field_tile)
@@ -1164,6 +1524,8 @@ func _update_props(delta: float) -> void:
 		node.visible = grow > 0.001
 		node.scale = Vector3(s, sy, s)
 		var y: float = p.ground + p.half_h * sy + p.hover * grow
+		if alter_amount > 0.0:
+			y -= TerrainNoise.crack_drop(p.world, alter_amount)
 		if p.special:
 			y += sin(_t * 0.7 + p.phase) * p.hover_amp
 			node.rotation.y += p.spin * delta
@@ -1363,24 +1725,31 @@ func _update_hud(delta: float) -> void:
 		"camera  %.1f m above ground   pitch %.1f°   watching %s (%d specials around)" % [_cam_y - ground_height(scroll_offset), rad_to_deg(_cam_pitch), "yes" if not _interest.is_empty() else "no", n_special],
 		"canyon  walls %+.1f m   %s" % [canyon_walls, ("following, %ds left" % int(_canyon_timer)) if _canyon_following else (("open, next in %ds" % int(_canyon_timer)) if _canyon_timer > 0.0 else "open, watching")],
 		"animals  %s" % (_animals.describe() if _animals else "off"),
+		"alter  %s" % _alter_text(),
 		"particles %d" % n_particles,
 		"",
-		"F1 wireframe [%s]   F2 grass/flowers [%s]   F3 hud   1-9 / F4 preset   0 auto-cycle" % ["on" if wire else "off", "on" if _grass_mmi.visible else "off"],
-		"F5 steering source   F6 re-zero plank   SPACE spawn animal   drag: heading   wheel: speed   +/- wind speed   arrows/WASD wind direction",
+		"F1 wireframe [%s]   F2 grass/flowers [%s]   F3 hud   1-9 / F4 preset   0 auto-cycle" % ["on" if wire else "off", "on" if (_grass_mmi and _grass_mmi.visible) else "off"],
+		"F fullscreen   F5 steering source   SPACE spawn animal   drag: heading   wheel: speed   +/- wind speed   arrows/WASD wind direction",
 	])
 
 
-## "steering mouse" / "steering serial [no port]" / "steering serial (calibrating)".
+## "off" / "76%   18s left   2 vent(s) erupting" / "healing 40% ...".
+func _alter_text() -> String:
+	if alter_amount <= 0.001 and _alter_left <= 0.0:
+		return "off"
+	var blown := 0
+	for v in _vents:
+		if v.blown:
+			blown += 1
+	if _alter_left <= 0.0:
+		return "healing %d%%   %d vent(s) draining" % [int(alter_amount * 100.0), blown]
+	return "%d%%   %ds left   %d vent(s) erupting" % [
+			int(alter_amount * 100.0), int(_alter_left), blown]
+
+
+## "steering mqtt" / "steering mqtt (auto offline)".
 func _steering_text() -> String:
-	var s := "steering " + Pilot.active_source_name()
-	#if Pilot.config.source == PilotConfig.Source.SERIAL:
-		#if not ImuInput.connected:
-			#s += " [no port]"
-		#elif ImuInput.is_calibrating():
-			#s += " (hold still)"
-		#else:
-			#s += "  stick (%+.2f, %+.2f)" % [Pilot.stick.x, Pilot.stick.y]
-	return s
+	return "steering " + Pilot.active_source_name()
 
 
 ## IDENTIFY: the ESP32s blink their LED. A screen can do better -- name itself,
@@ -1421,13 +1790,28 @@ func _on_device_command(capability: String, params: Dictionary) -> void:
 				Pilot.set_source(names.find(want))
 			else:
 				print("[device] PILOT: unknown source ", want, " -- have ", names)
+		"ALTER":
+			# {"duration": 10000} -- milliseconds, as the firmware uses.
+			alter(float(params.get("duration", 10000)) / 1000.0)
 		"DISPLAY":
-			# {"hud": true, "primitives": false} -- either, or both.
+			# {"hud": true, "primitives": false, "fullscreen": true} -- any of
+			# them, in any combination.
 			if params.has("hud"):
 				set_hud(bool(params["hud"]))
 			if params.has("primitives"):
 				set_primitives(bool(params["primitives"]))
+			if params.has("fullscreen"):
+				set_fullscreen(bool(params["fullscreen"]))
+				print("[display] fullscreen ", "on" if is_fullscreen() else "off")
 		"WIND":
+			# {"gain": 2.5} scales every reading before it drives anything, for
+			# when real wind is too sedate to watch. Independent of the
+			# speed/direction override below, which fakes a reading outright.
+			if params.has("gain"):
+				Pilot.config.mqtt_speed_per_ms = maxf(float(params["gain"]), 0.0)
+				print("[wind] gain x%.2f" % Pilot.config.mqtt_speed_per_ms)
+			if not (params.has("speed") or params.has("direction")):
+				return
 			# {"speed": 6.5, "direction": 225} -- the dashboard sliders.
 			WindInput.set_wind(
 					float(params.get("speed", WindInput.current_speed)),
@@ -1462,11 +1846,16 @@ func _on_collect_telemetry(into: Dictionary) -> void:
 	into["heading"] = int(fposmod(rad_to_deg(-heading), 360.0))
 	into["preset"] = _from.resource_path.get_file().get_basename()
 	into["pilot"] = Pilot.source_name()
-	into["pilot_active"] = Pilot.active_source_name()
+	into["pilot_active"] = Pilot.active_source_id()
 	into["hud"] = show_hud
 	into["primitives"] = show_primitives
+	into["grass"] = show_grass
+	into["fullscreen"] = is_fullscreen()
+	into["alter"] = snappedf(alter_amount, 0.01)
 	into["wind"] = snappedf(WindInput.current_speed, 0.01)
 	into["wind_dir"] = int(fposmod(rad_to_deg(WindInput.current_direction.angle()), 360.0))
+	into["wind_gain"] = snappedf(Pilot.config.mqtt_speed_per_ms, 0.01)
+	into["wind_steady"] = snappedf(WindInput.tendency_steadiness, 0.01)
 	if _animals:
 		into["animals"] = _animals.alive_count()
 

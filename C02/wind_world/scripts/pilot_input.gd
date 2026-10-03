@@ -3,8 +3,8 @@ extends Node
 ##
 ## Single source of truth for STEERING -- the one thing that says "turn this
 ## much this frame, travel this fast". World reads heading_delta / throttle
-## from here and never touches a mouse or a sensor itself, so swapping the
-## plank for a mouse changes nothing downstream.
+## from here and never touches a mouse or a sensor itself, so swapping one
+## input device for another changes nothing downstream.
 ##
 ## The wind is NOT steering and does not live here -- it arrives from an
 ## anemometer on the MQTT bus, see scripts/wind_input.gd.
@@ -14,17 +14,9 @@ extends Node
 ##
 ##   heading_delta : radians to add to the heading THIS FRAME (already * dt)
 ##   throttle      : multiplier on travel speed, 0 = stopped, 1 = normal
-##   stick         : (turn, lean) in -1..1, for the HUD -- what the pilot asked for
-##
-## On the plank both axes behave like the mouse they replace. Leaning left or
-## right turns for as long as you hold it and stops where you leave it, the way
-## a drag does. Leaning forward winds the speed up and leaning back winds it
-## down, the way the wheel does -- so coming back to centre HOLDS the speed you
-## reached rather than dropping you back to a default.
 ##
 ## KEYS
-##   F5  cycle source (auto -> mouse -> serial -> mqtt)
-##   F6  re-zero the plank: stand still in your neutral pose and press it
+##   F5  cycle source (auto -> mouse -> mqtt)
 
 signal source_changed(source: PilotConfig.Source)
 
@@ -32,32 +24,29 @@ signal source_changed(source: PilotConfig.Source)
 
 var heading_delta: float = 0.0
 var throttle: float = 1.0
-var stick: Vector2 = Vector2.ZERO
 
 ## Drag accumulates here between frames and is consumed by _process.
 var _mouse_turn: float = 0.0
-## The wheel. In MOUSE mode this IS the throttle; over a plank it trims it.
+## The wheel. In MOUSE mode this IS the throttle; elsewhere it trims it.
 var _mouse_throttle: float = 1.0
 var _dragging: bool = false
-var _smoothed := Vector2.ZERO
 ## Reported by World each frame. The wind gives an absolute bearing, so we
 ## need the real heading to steer toward it -- our own accumulated deltas
 ## would drift from it as soon as anything else (the canyon follower) turns.
 var world_heading: float = 0.0
-## The plank's wound-up speed. Leaning changes it; centring leaves it alone.
-var _plank_throttle: float = 0.0
+## What World would travel at with throttle 1.0, i.e. forward_speed_base plus
+## the wind term. Reported each frame so the MQTT source can ask for a real
+## speed in m/s and have it come out the other end unchanged.
+var world_base_speed: float = 1.0
 
 
 func _ready() -> void:
 	if config == null:
 		config = PilotConfig.new()
-	_plank_throttle = config.start_throttle
 	print("Pilot: source = %s" % source_name())
 
 
 func _process(delta: float) -> void:
-	var turn: float = 0.0   # -1..1, lean left/right
-	var lean: float = 0.0   # -1..1, lean back/forward
 	var speed: float = 1.0  # final multiplier
 	var bearing_delta: float = 0.0 # radians this frame, for sources given a bearing
 
@@ -68,39 +57,43 @@ func _process(delta: float) -> void:
 			speed = _mouse_throttle
 		PilotConfig.Source.MQTT:
 			if WindInput.is_live():
-				# Travel downwind. The anemometer gives a bearing, not a nudge,
-				# so ease toward it instead of snapping.
-				if config.mqtt_follow_wind:
-					var want: float = wrapf(_wind_heading() - world_heading, -PI, PI)
-					var step: float = deg_to_rad(config.mqtt_turn_rate_deg) * delta
-					bearing_delta = clampf(want, -step, step)
-				# A reading of zero is dead calm, not an absent reading: keep
-				# the slowest drift that still reads as alive.
-				var t: float = clampf(WindInput.current_speed / maxf(config.mqtt_full_wind, 0.01), 0.0, 1.0)
-				speed = maxf(t * config.mqtt_max_throttle, config.mqtt_min_throttle)
+				# Travel downwind, steering by the PREVAILING direction rather
+				# than the live vane, and only once it has settled into one.
+				# See WindInput.tendency.
+				if config.mqtt_follow_wind \
+						and WindInput.tendency_steadiness >= config.mqtt_steer_min_steady:
+					var want_h: float = wrapf(_wind_heading() - world_heading, -PI, PI)
+					# Ignore small errors outright, and ease the correction in
+					# over the band above that. Without this the heading keeps
+					# making one-degree corrections forever and the horizon
+					# visibly rocks even when the wind is steady.
+					var dead: float = deg_to_rad(config.mqtt_heading_deadband_deg)
+					var urgency: float = smoothstep(dead, dead * 2.5, absf(want_h))
+					if urgency > 0.0:
+						var step: float = deg_to_rad(config.mqtt_turn_rate_deg) * urgency * delta
+						bearing_delta = clampf(want_h, -step, step)
+				# Asked for in m/s and delivered in m/s: World multiplies our
+				# throttle by (forward_speed_base + wind * scroll_speed_scale),
+				# so divide that back out and the number below is the speed
+				# actually travelled. A reading of zero is dead calm, not an
+				# absent reading, so it keeps the minimum drift.
+				var want: float = clampf(WindInput.current_speed * config.mqtt_speed_per_ms,
+						config.mqtt_min_speed, config.mqtt_max_speed)
+				speed = want / maxf(world_base_speed, 0.01)
 			elif config.mqtt_stop_when_silent:
 				speed = 0.0  # nothing on the topic: we do not know, so we wait
 			else:
-				speed = config.mqtt_min_throttle
-		PilotConfig.Source.SERIAL:
-			# Smooth after shaping: the deadzone still bites on the raw tilt,
-			# so the stick can settle at exactly zero instead of easing toward it.
-			var t: float = clampf(config.stick_smoothing * delta, 0.0, 1.0)
-			_smoothed = _smoothed.lerp(Vector2(_plank_turn(), _plank_lean()), t)
-			turn = _smoothed.x
-			lean = _smoothed.y
-			_integrate_throttle(lean, delta)
-			speed = _plank_throttle * _mouse_throttle
+				speed = config.mqtt_min_speed / maxf(world_base_speed, 0.01)
 
-	# Rate-based sources turn continuously while held; the mouse contributes a
-	# one-shot impulse of however far it was dragged since the last frame.
-	heading_delta = deg_to_rad(turn * config.turn_rate_deg) * delta + bearing_delta
+	# MQTT is given an absolute bearing and eases toward it; the mouse
+	# contributes a one-shot impulse of however far it was dragged since the
+	# last frame.
+	heading_delta = bearing_delta
 	if _mouse_allowed():
 		heading_delta += _mouse_turn
 	_mouse_turn = 0.0
 
 	throttle = maxf(speed, 0.0)
-	stick = Vector2(turn, lean)
 
 
 ## What is actually steering right now.
@@ -119,12 +112,22 @@ func is_falling_back() -> bool:
 	return active_source() != config.source
 
 
-## Wind direction as a world heading. WindInput keeps it as the compass-style
-## unit vector the anemometer sends; travel_dir in world.gd is (-sin h, -cos h),
-## hence the negation.
+## The heading to travel on, given the wind.
+##
+## Two separate conversions, and it is worth spelling both out because getting
+## either one wrong looks the same from the outside -- you sail into the wind.
+##
+##  1. The anemometer reports the direction the wind comes FROM, which is the
+##     meteorological convention. We want to be carried BY it, so we go where
+##     it is going: half a turn away. 90 (from the east) becomes 270, heading
+##     west. 0 becomes 180.
+##  2. Compass bearings increase clockwise from north. World headings increase
+##     the other way -- heading 0 travels toward -Z and heading 90 travels
+##     toward -X -- so the bearing is negated to become a heading.
 func _wind_heading() -> float:
-	var d: Vector2 = WindInput.current_direction
-	return atan2(-d.x, -d.y)
+	var d: Vector2 = WindInput.tendency
+	var from_deg: float = atan2(d.x, d.y)      # where it blows FROM, in radians
+	return -(from_deg + PI)                     # half turn, then bearing -> heading
 
 
 func _mouse_allowed() -> bool:
@@ -132,39 +135,6 @@ func _mouse_allowed() -> bool:
 	if src == PilotConfig.Source.MOUSE:
 		return true
 	return config.allow_mouse_override and src != PilotConfig.Source.AUTO
-
-
-## Lean left/right -> how fast we turn.
-func _plank_turn() -> float:
-	var t := _shape(ImuInput.tilt.x, config.turn_deadzone_deg, config.turn_range_deg,
-			config.turn_expo)
-	return -t if config.invert_turn else t
-
-
-## Lean forward/back, -1..1.
-func _plank_lean() -> float:
-	var s := _shape(ImuInput.tilt.y, config.speed_deadzone_deg, config.speed_range_deg,
-			config.speed_expo)
-	return -s if config.invert_speed else s
-
-
-## Speed is wound up and down rather than pointed at: the lean is a RATE of
-## change, so centring the plank holds whatever speed you reached (the dead
-## zone makes lean exactly 0 there, so it holds dead steady and doesn't sag).
-func _integrate_throttle(lean: float, delta: float) -> void:
-	var rate: float = config.accelerate_per_sec if lean >= 0.0 else config.brake_per_sec
-	_plank_throttle = clampf(_plank_throttle + lean * rate * delta, 0.0, config.max_throttle)
-
-
-## Degrees of tilt -> -1..1, with a dead zone around neutral and an expo curve
-## so small leans (the ones you make while just balancing) stay gentle.
-func _shape(angle_deg: float, deadzone: float, range_deg: float, expo: float) -> float:
-	var mag: float = absf(angle_deg) - deadzone
-	if mag <= 0.0:
-		return 0.0
-	var span: float = maxf(range_deg - deadzone, 0.001)
-	var n: float = clampf(mag / span, 0.0, 1.0)
-	return signf(angle_deg) * pow(n, expo)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -190,8 +160,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	match event.keycode:
 		KEY_F5:
 			set_source((config.source + 1) % PilotConfig.Source.size())
-		KEY_F6:
-			ImuInput.calibrate()
 
 
 func set_source(source: PilotConfig.Source) -> void:
@@ -201,8 +169,6 @@ func set_source(source: PilotConfig.Source) -> void:
 	config.source = source
 	_mouse_throttle = 1.0
 	_mouse_turn = 0.0
-	_plank_throttle = config.start_throttle
-	_smoothed = Vector2.ZERO
 	print("Pilot: source = %s" % source_name())
 	source_changed.emit(source)
 
@@ -211,10 +177,18 @@ func source_name() -> String:
 	return PilotConfig.Source.keys()[config.source].to_lower()
 
 
-## What is steering, including the fallback. This is what belongs on a HUD or
-## a dashboard -- saying "mqtt" while actually coasting on AUTO is a lie.
+## What is actually steering, as a bare id ("auto"). Pairs with source_name(),
+## which is what was ASKED for ("mqtt"). The two differ only while the broker
+## is unreachable, but that is exactly when you need to be told -- reporting
+## "mqtt" while coasting on AUTO is a lie. Both are plain ids so a dashboard
+## can compare them and match them against its own buttons.
+func active_source_id() -> String:
+	return PilotConfig.Source.keys()[active_source()].to_lower()
+
+
+## The same thing said in words, for the HUD. Prose belongs on a label, not in
+## telemetry -- see _on_collect_telemetry in world.gd.
 func active_source_name() -> String:
-	var name: String = PilotConfig.Source.keys()[active_source()].to_lower()
 	if is_falling_back():
-		return "%s (%s offline)" % [name, source_name()]
-	return name
+		return "%s (%s offline)" % [active_source_id(), source_name()]
+	return active_source_id()

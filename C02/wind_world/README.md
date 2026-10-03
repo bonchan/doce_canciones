@@ -30,8 +30,8 @@ Debug keys:
 - `1`–`9` — blend into preset `configs/<n>_name.tres` (top row or keypad; see Presets below)
 - `F4` — blend into the next preset
 - `0` — auto-cycle through the presets on/off (every `auto_cycle_seconds` on the World node)
-- `F5` — cycle the steering source (auto → mouse → serial → mqtt)
-- `F6` — re-zero the plank: stand still in your neutral pose and press it
+- `F5` — cycle the steering source (auto → mouse → mqtt)
+- `SPACE` — spawn an animal in front of the camera
 
 Mouse:
 
@@ -51,48 +51,41 @@ Pick the source in `imu/pilot_default.tres`, or press `F5` while running:
 
 - **auto** — nobody steers; the wind carries you. The original behaviour.
 - **mouse** — drag and wheel, as above.
-- **serial** — an MPU-6050 on a plank you stand on, over USB. Both axes behave
-  like the mouse they replace: leaning left/right turns for as long as you hold
-  it and stops where you leave it (like a drag), and leaning forward winds the
-  speed *up* while leaning back winds it *down* to a stop (like the wheel), so
-  coming back to centre **holds** the speed you reached.
-- **mqtt** — the same numbers over the network. Not implemented yet; coasts
-  like *auto* if you select it.
+- **mqtt** — carried by the wind on the MQTT bus (the default). Wind speed
+  becomes travel speed and the heading eases downwind, so the piece is driven
+  by whatever the anemometer reports. A reading of *zero* is dead calm and
+  still drifts at `mqtt_min_throttle`; *no reading at all* is different, and
+  it stands still and waits. While the broker is unreachable it falls back to
+  *auto* by itself and returns on its own — the HUD says `mqtt (auto offline)`
+  when that is happening.
 
-`allow_mouse_override` (on by default) keeps the mouse live while the plank is
-driving, which is handy while building — the wheel becomes a master gain on
-top of the lean. Turn it off for the installation so a stray mouse can't
-hijack the piece.
+### Where the settings live
 
-### The plank
+There is no node to select: `Pilot`, `WindInput` and `Device` are
+all autoloads. The tunables live in resource files instead — click one in the
+FileSystem dock and the Inspector shows every value, grouped:
 
-`ImuInput` (`scripts/imu_input.gd`) reads the board over serial through the
-[GdSerial](https://github.com/sujithchristopher/gdserial) addon and runs a
-complementary filter over it: the accelerometer knows which way is down but
-picks up every footstep, the gyro is smooth but drifts, so trusting the gyro
-short-term and letting the accelerometer pull it straight long-term gives an
-angle that is both steady underfoot and drift-free. A plain MPU-6050 has no
-magnetometer, so there is no absolute heading — twist is available as a *rate*
-only.
+| File | What is in it |
+| --- | --- |
+| `imu/pilot_default.tres` | `PilotConfig`: which source steers, mouse feel, the MQTT wind mapping |
+| `configs/<n>_*.tres` | `WorldConfig`: one whole look — terrain, colours, plants, sky, camera |
+| `animals/*.tres` | `AnimalConfig`: one species each |
+| `config.cfg` | Broker, credentials, zone, device type, wind topic, HUD and primitives |
 
-Set the port in `imu/imu_default.tres` (leave `com_port` empty to print the
-ports Godot can see). Tilt is measured against whatever pose you calibrated, so
-the sensor doesn't need to sit level on the plank — stand naturally and press
-`F6`.
+These files mostly look empty in a text editor. Godot only writes values that
+differ from the script default, so a freshly-tuned resource can be two lines
+long while the Inspector still shows forty properties — the rest come from the
+`@export` defaults in the matching `scripts/*_config.gd`, which is also where
+each one is documented.
 
-Tune the feel in `imu/pilot_default.tres`. The dead zones stop the view creeping
-and the speed drifting while you just balance; `turn_rate_deg` sets how fast a
-full lean comes round; `accelerate_per_sec` / `brake_per_sec` set how quickly
-speed winds up and down, and `start_throttle` decides whether you arrive already
-moving or have to lean forward to get going.
+Note that `Pilot` **preloads** its config, so editing the file while the piece
+is running has no effect until you restart it. `F5` and the dashboard change
+the live values instead.
 
-If leaning feels like it takes a moment to register, the knob is `gyro_trust` in
-`imu/imu_default.tres`, not anything in the pilot config: the accelerometer only
-pulls the angle over by `1 - gyro_trust` per sample, so 0.98 takes most of a
-second to catch up while 0.9 lands in about 0.15s. Lower it further (0 is
-accelerometer only) if it still lags; raise it if footsteps make the view
-twitch. The expo curves are the other suspect — `turn_expo` above ~1.5 makes
-small leans weak enough to feel like lag.
+`allow_mouse_override` (on by default) keeps the mouse live while something
+else is driving, which is handy while building. Turn it off for the
+installation so a stray mouse cannot hijack the piece.
+
 
 ## How it works
 
@@ -282,7 +275,7 @@ scenes/
   Main.tscn            entry scene, just the World node
   default_env.tres      fallback environment (World builds its own at runtime)
 scripts/
-  wind_input.gd          autoload: UDP listener + simulation/keyboard fallback
+  wind_input.gd          autoload: wind off the MQTT bus, UDP, or simulated
   world.gd                builds terrain/grass/flowers/petals/props, drives the scroll
   terrain_noise.gd        CPU copy of the terrain height field (camera + props)
   world_config.gd         WorldConfig resource: one complete look

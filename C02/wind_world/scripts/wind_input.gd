@@ -29,12 +29,36 @@ signal wind_changed(speed_ms: float, direction: Vector2)
 @export var enable_keyboard_override: bool = true
 @export var smoothing_speed: float = 2.5      ## higher = wind reacts faster to new readings
 @export var max_speed_ms: float = 18.0        ## anemometer readings are clamped to this
-@export var silence_timeout_sec: float = 3.0  ## no packets for this long -> assume sim/offline
+@export var silence_timeout_sec: float = 3.0
+## Roughly how long the prevailing direction takes to swing round to a new
+## one. Long is the point: this is meant to be the shape of the afternoon, not
+## of the last gust.
+@export var tendency_seconds: float = 45.0
+## Wind speed at which a reading gets a full vote in the prevailing direction.
+## Below it the reading still counts, just proportionally less.
+@export var tendency_full_wind: float = 3.0  ## no packets for this long -> assume sim/offline
 
 ## Smoothed, ready-to-use values. direction is a unit Vector2 in XZ terms
 ## (x = east/west, y = north/south) already normalized.
 var current_speed: float = 0.0
 var current_direction: Vector2 = Vector2.RIGHT
+
+## The PREVAILING direction, as opposed to the instantaneous one above.
+##
+## A vane answers every gust and eddy, so steering straight off
+## current_direction wanders even in steady wind, and in calm it wanders on
+## pure noise. This is a running vector mean instead: each reading is added as
+## a vector weighted by how hard it was blowing at the time, and the sum
+## decays. Strong wind therefore votes loudly, a becalmed vane barely votes at
+## all, and what comes out is where the wind has actually been going lately.
+##
+## tendency_steadiness is the length of that sum before normalising, 0..1. It
+## falls out of the same arithmetic for free and is genuinely useful: near 1
+## the wind has held one direction, near 0 it has been swirling or absent, so
+## a steering source can simply decline to turn until it means something.
+var tendency: Vector2 = Vector2.RIGHT
+var tendency_steadiness: float = 0.0
+var _tendency_sum: Vector2 = Vector2.ZERO
 
 var _target_speed: float = 0.0
 var _target_direction: Vector2 = Vector2.RIGHT
@@ -81,6 +105,7 @@ func _process(delta: float) -> void:
 	current_speed = lerp(current_speed, _target_speed, t)
 	current_direction = current_direction.normalized().slerp(_target_direction.normalized(), t).normalized()
 
+	_update_tendency(delta)
 	wind_changed.emit(current_speed, current_direction)
 
 
@@ -100,6 +125,20 @@ func set_wind(speed_ms: float, direction_deg: float) -> void:
 	var rad := deg_to_rad(direction_deg)
 	_target_direction = Vector2(sin(rad), cos(rad))
 	_last_packet_time = _time
+
+
+## Running, speed-weighted vector mean of the direction. See `tendency`.
+func _update_tendency(delta: float) -> void:
+	# How much this reading gets to say. A vane that is not turning is not
+	# reporting a direction, it is reporting noise.
+	var vote: float = clamp(current_speed / max(tendency_full_wind, 0.01), 0.0, 1.0)
+	var k: float = clamp(delta / max(tendency_seconds, 0.01), 0.0, 1.0)
+	_tendency_sum = _tendency_sum.lerp(current_direction.normalized() * vote, k)
+	tendency_steadiness = clamp(_tendency_sum.length(), 0.0, 1.0)
+	# Below that the sum is too short to have a meaningful angle, so hold the
+	# last one rather than spinning on rounding error.
+	if tendency_steadiness > 0.02:
+		tendency = _tendency_sum.normalized()
 
 
 func _read_udp_packets() -> void:

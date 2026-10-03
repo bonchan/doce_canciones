@@ -66,6 +66,27 @@ static func _ridged(uv: Vector2, k: float, octaves: int) -> float:
 	return v / norm
 
 
+## CPU mirror of w_crack / w_crack_drop in common.gdshaderinc. Kept OUT of
+## height() on purpose -- the camera reads height() and must sail over the
+## disaster, not drop into it. Props read this separately so the fissures
+## swallow the vegetation while the view keeps flying.
+const CRACK_DEPTH: float = 46.0
+
+
+static func crack(p: Vector2, alter: float) -> float:
+	if alter <= 0.0:
+		return 0.0
+	var uv: Vector2 = p / WRAP_PERIOD
+	var n: float = _ridged(uv, _cells(0.010), 3)
+	var lo: float = lerp(0.965, 0.780, alter)
+	return smoothstep(lo, min(lo + 0.09, 0.999), n)
+
+
+static func crack_drop(p: Vector2, alter: float) -> float:
+	var c: float = crack(p, alter)
+	return c * c * alter * alter * CRACK_DEPTH
+
+
 static func height(p: Vector2, hill_scale: float, hill_height: float,
 		mountain_scale: float, mountain_height: float, warp: float,
 		terrace_step: float, terrace_strength: float,

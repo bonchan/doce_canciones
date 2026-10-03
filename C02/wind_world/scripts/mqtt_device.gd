@@ -17,8 +17,8 @@ extends Node
 ## the last will means the broker announces us offline within seconds if this
 ## process dies, rather than anyone waiting on a timeout.
 ##
-## Settings live in res://config.cfg so an installed build can be repointed
-## without a rebuild.
+## Settings live in config.cfg, looked for BESIDE THE EXECUTABLE first so an
+## installed build can be repointed without a rebuild. See _ready().
 
 const FW_VERSION := "0.0.1"
 const RETRY_INTERVAL := 10.0
@@ -30,11 +30,11 @@ const BCM_CONNECTED := 20
 
 ## Announce metadata, exactly as on the firmware: it enforces nothing, so it is
 ## only worth anything if it stays honest. Every name below is handled -- do
-## not add one here until it is. (ALTER is deliberately absent: it means
-## "behave oddly for a while", which has no agreed meaning for this piece yet.)
+## not add one here until it is.
 const PUBLISHES := ["fps", "speed", "heading", "preset", "animals", "pilot",
-	"pilot_active", "wind", "wind_dir", "hud", "primitives"]
-const SUBSCRIBES := ["IDENTIFY", "PRESET", "WIND", "SPAWN", "PILOT", "DISPLAY"]
+	"pilot_active", "wind", "wind_dir", "wind_gain", "wind_steady", "hud",
+	"primitives", "grass", "fullscreen", "alter"]
+const SUBSCRIBES := ["IDENTIFY", "ALTER", "PRESET", "WIND", "SPAWN", "PILOT", "DISPLAY"]
 
 signal connected()
 signal disconnected()
@@ -84,8 +84,24 @@ var _t_broadcast := ""  # installation/broadcast/<type>/cmd/
 func _ready() -> void:
 	var cfg := ConfigFile.new()
 	_cfg = cfg
-	if cfg.load("res://config.cfg") != OK:
-		print("[device] no config.cfg -- staying off the bus")
+	# Beside the executable FIRST. The whole point of this file is that the
+	# gallery machine can be repointed -- different broker, zone, fullscreen --
+	# without a rebuild, and res:// lives inside the .pck where nothing can be
+	# edited. res:// is last so it still works when running from the editor,
+	# and so an export can ship a default.
+	var tried: PackedStringArray = []
+	var loaded := false
+	for path in [
+			OS.get_executable_path().get_base_dir().path_join("config.cfg"),
+			"user://config.cfg",
+			"res://config.cfg"]:
+		tried.append(path)
+		if cfg.load(path) == OK:
+			print("[device] config: ", path)
+			loaded = true
+			break
+	if not loaded:
+		print("[device] no config.cfg in any of %s -- staying off the bus" % ", ".join(tried))
 		return
 	_enabled = cfg.get_value("mqtt", "enabled", true)
 	_broker = cfg.get_value("mqtt", "broker_url", "tcp://localhost:1883")

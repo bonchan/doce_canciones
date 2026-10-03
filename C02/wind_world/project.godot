@@ -24,18 +24,17 @@ config/icon="res://icon.svg"
 
 Device="*res://scripts/mqtt_device.gd"
 WindInput="*res://scripts/wind_input.gd"
-ImuInput="*res://scripts/imu_input.gd"
 Pilot="*res://scripts/pilot_input.gd"
 
 [display]
 
-window/size/viewport_width=1920
-window/size/viewport_height=1080
+window/size/viewport_width=1024
+window/size/viewport_height=768
 window/stretch/mode="canvas_items"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/gdserial/plugin.cfg")
+enabled=PackedStringArray()
 
 [rendering]
 

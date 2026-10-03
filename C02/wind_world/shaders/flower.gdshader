@@ -45,6 +45,14 @@ void vertex() {
 	VERTEX.xz += correction;
 	VERTEX.y += ground_h;
 
+	// ALTER: the ground under this one is falling away, so it goes with it --
+	// and once the fissure has really opened it is gone, rather than left
+	// standing on nothing.
+	float crack = w_crack(world_p);
+	VERTEX.y -= w_crack_drop(world_p);
+	float swallowed = smoothstep(0.12, 0.45, crack);
+	VERTEX.y = mix(VERTEX.y, ground_h - w_crack_drop(world_p), swallowed);
+
 	// Flowers are stiffer than grass and sway rather than bend hard;
 	// UV.y = 0 at the base of the stem, 1 at the flower head.
 	float sway_amount = UV.y * UV.y * UV.y;
