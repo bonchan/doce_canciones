@@ -1,0 +1,100 @@
+{
+  "name": "English",
+  "locale": "en",
+  "titles": {
+    "orbit": "orbit",
+    "tracking": "tracking",
+    "reception": "reception",
+    "passes": "passes",
+    "telemetry": "telemetry",
+    "signal": "signal"
+  },
+  "phase": {
+    "waiting": "NEXT · AOS {countdown}",
+    "approach": "ACQUIRING · AOS {countdown}",
+    "pass": "RECEIVING {pct}%",
+    "depart": "LOS"
+  },
+  "common": {
+    "unknownStation": "unknown station",
+    "noPasses": "no passes",
+    "noPassesYet": "no passes in the library yet",
+    "reconnecting": "reconnecting to the installation server…",
+    "sound": "sound",
+    "enableSound": "click to enable sound"
+  },
+  "image": {
+    "nextPass": "NEXT PASS",
+    "acquiring": "ACQUIRING SIGNAL",
+    "aos": "AOS {countdown}",
+    "caption": "{kind} · recorded {date}",
+    "kinds": {
+      "normal": "Normal",
+      "decoded": "Decoded",
+      "class": "Class"
+    }
+  },
+  "schedule": {
+    "status": "status",
+    "aos": "aos",
+    "satellite": "satellite",
+    "station": "station",
+    "recorded": "recorded",
+    "maxElevation": "max el",
+    "length": "length",
+    "signal": "signal",
+    "received": "✓ received",
+    "aosIn": "AOS in {countdown}",
+    "receiving": "receiving {pct}%",
+    "los": "LOS",
+    "acquiring": "acquiring · AOS {countdown}",
+    "next": "next · AOS {countdown}",
+    "apt": "APT ♪",
+    "digital": "digital",
+    "library": "library: {passes} passes from {stations} stations · {satellites}"
+  },
+  "telemetry": {
+    "azimuth": "azimuth",
+    "elevation": "elevation",
+    "range": "range",
+    "rangeRate": "range rate",
+    "doppler": "doppler",
+    "downlink": "downlink",
+    "pathLoss": "path loss",
+    "recorded": "recorded",
+    "station": "station",
+    "maxElevation": "max elevation",
+    "dopplerAxis": "doppler (Hz)",
+    "north": "N",
+    "east": "E",
+    "south": "S",
+    "west": "W",
+    "aos": "AOS",
+    "los": "LOS"
+  },
+  "signal": {
+    "decoding": "decoding the recording…",
+    "unreadable": "recording unreadable",
+    "spectrum": "APT spectrum · last minute",
+    "carrier": "2.4 kHz carrier",
+    "constellation": "LRPT · QPSK constellation (simulated)",
+    "signal": "signal",
+    "noSignal": "no signal",
+    "elevation": "EL {el}°"
+  },
+  "globe": {
+    "elevation": "EL {el}°"
+  },
+  "phrases": {
+    "words": [
+      "orbit", "signal", "silence", "distance", "light", "darkness", "horizon", "star",
+      "dust", "echo", "void", "pulse", "noise", "satellite", "cloud", "storm",
+      "ocean", "night", "dawn", "earth", "moon", "sun", "comet", "gravity",
+      "wave", "frequency", "static", "ice", "wind", "sky", "aurora", "eclipse",
+      "galaxy", "nebula", "meteor", "planet", "atmosphere", "cosmos", "infinity", "antenna",
+      "transmission", "receiver", "memory", "time", "weather", "rain", "heat", "cold",
+      "falling", "drifting", "spinning", "trace", "path", "return", "far", "above",
+      "below", "alone", "together", "waiting"
+    ]
+  }
+}

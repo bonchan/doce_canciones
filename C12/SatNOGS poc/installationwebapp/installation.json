@@ -1,0 +1,27 @@
+{
+  "server": { "host": "127.0.0.1", "port": 5180 },
+  "downloads": "../downloads",
+  "location": "station",
+  "imagery": "natural",
+  "order": "shuffle",
+  "satellites": [],
+  "speed": 64,
+  "volume": 0.9,
+  "images": { "NOAA": "normal", "METEOR": "mcir_map" },
+  "hideCursor": false,
+  "language": "es",
+  "phrases": true,
+  "waitSeconds": 0,
+  "approachSeconds": 8,
+  "departSeconds": 0,
+  "upcoming": 8,
+  "browser": "",
+  "displays": [
+    { "view": "globe", "screen": 1 },
+    { "view": "image", "screen": 2, "audio": true },
+    { "view": "schedule", "screen": 3 },
+    { "view": "telemetry", "screen": 4 },
+    { "view": "signal", "screen": 5 },
+    { "view": "globe", "screen": 6, "params": "camera=follow" }
+  ]
+}

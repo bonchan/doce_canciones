@@ -1,0 +1,100 @@
+{
+  "name": "Español",
+  "locale": "es",
+  "titles": {
+    "orbit": "órbita",
+    "tracking": "seguimiento",
+    "reception": "recepción",
+    "passes": "pasadas",
+    "telemetry": "telemetría",
+    "signal": "señal"
+  },
+  "phase": {
+    "waiting": "PRÓXIMA · AOS {countdown}",
+    "approach": "ADQUIRIENDO · AOS {countdown}",
+    "pass": "RECIBIENDO {pct}%",
+    "depart": "LOS"
+  },
+  "common": {
+    "unknownStation": "estación desconocida",
+    "noPasses": "sin pasadas",
+    "noPassesYet": "todavía no hay pasadas en la biblioteca",
+    "reconnecting": "reconectando con el servidor de la instalación…",
+    "sound": "sonido",
+    "enableSound": "clic para activar el sonido"
+  },
+  "image": {
+    "nextPass": "PRÓXIMA PASADA",
+    "acquiring": "ADQUIRIENDO SEÑAL",
+    "aos": "AOS {countdown}",
+    "caption": "{kind} · grabada {date}",
+    "kinds": {
+      "normal": "Normal",
+      "decoded": "Decodificada",
+      "class": "Clasificación"
+    }
+  },
+  "schedule": {
+    "status": "estado",
+    "aos": "aos",
+    "satellite": "satélite",
+    "station": "estación",
+    "recorded": "grabada",
+    "maxElevation": "elev. máx",
+    "length": "duración",
+    "signal": "señal",
+    "received": "✓ recibida",
+    "aosIn": "AOS en {countdown}",
+    "receiving": "recibiendo {pct}%",
+    "los": "LOS",
+    "acquiring": "adquiriendo · AOS {countdown}",
+    "next": "próxima · AOS {countdown}",
+    "apt": "APT ♪",
+    "digital": "digital",
+    "library": "biblioteca: {passes} pasadas de {stations} estaciones · {satellites}"
+  },
+  "telemetry": {
+    "azimuth": "azimut",
+    "elevation": "elevación",
+    "range": "distancia",
+    "rangeRate": "velocidad radial",
+    "doppler": "doppler",
+    "downlink": "frecuencia de bajada",
+    "pathLoss": "pérdida de trayecto",
+    "recorded": "grabación",
+    "station": "estación",
+    "maxElevation": "elevación máxima",
+    "dopplerAxis": "doppler (Hz)",
+    "north": "N",
+    "east": "E",
+    "south": "S",
+    "west": "O",
+    "aos": "AOS",
+    "los": "LOS"
+  },
+  "signal": {
+    "decoding": "decodificando la grabación…",
+    "unreadable": "grabación ilegible",
+    "spectrum": "espectro APT · último minuto",
+    "carrier": "portadora de 2,4 kHz",
+    "constellation": "LRPT · constelación QPSK (simulada)",
+    "signal": "señal",
+    "noSignal": "sin señal",
+    "elevation": "EL {el}°"
+  },
+  "globe": {
+    "elevation": "EL {el}°"
+  },
+  "phrases": {
+    "words": [
+      "órbita", "señal", "silencio", "distancia", "luz", "oscuridad", "horizonte", "estrella",
+      "polvo", "eco", "vacío", "pulso", "ruido", "satélite", "nube", "tormenta",
+      "océano", "noche", "amanecer", "tierra", "luna", "sol", "cometa", "gravedad",
+      "onda", "frecuencia", "estática", "hielo", "viento", "cielo", "aurora", "eclipse",
+      "galaxia", "nebulosa", "meteoro", "planeta", "atmósfera", "cosmos", "infinito", "antena",
+      "transmisión", "receptor", "memoria", "tiempo", "clima", "lluvia", "calor", "frío",
+      "cayendo", "flotando", "girando", "rastro", "camino", "regreso", "lejos", "arriba",
+      "abajo", "solo", "juntos", "esperando"
+    ]
+  }
+}
