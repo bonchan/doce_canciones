@@ -12,6 +12,7 @@ import CommandPanel from '../../components/CommandPanel';
 //   PRESET  which world it is looking at.
 //   SPAWN   drop an animal in front of the camera.
 //   DISPLAY the debug HUD, and whether the placeholder primitives are drawn.
+//   ALTER   the disaster. Duration in ms, as the ESP32 firmware uses.
 //
 // The preset and species lists are NOT hardcoded here — the piece advertises
 // both in its announce, and the backend passes unknown announce fields
@@ -71,14 +72,17 @@ function Slider({ label, value, min, max, step, unit, onChange, onCommit }) {
   );
 }
 
-// auto and mqtt are the two that matter in the gallery; mouse is for working
-// on it, and serial is the plank, which you would not switch to from here but
-// is worth being able to see and select.
+// mqtt is what the gallery runs on; auto is the fallback it uses by itself
+// when the broker is unreachable; mouse is for working on it.
+// App.css has .card and .jog-btn; it has no .panel, no .button-row and no
+// .active, so those are done here rather than invented in the stylesheet.
+const ROW = { display: 'flex', flexWrap: 'wrap', gap: 8, margin: '8px 0 2px' };
+const ON = { outline: '2px solid currentColor', opacity: 1 };
+
 const SOURCES = [
   { id: 'mqtt', label: 'MQTT (wind)', hint: 'carried by the anemometer on the bus' },
   { id: 'auto', label: 'Auto', hint: 'simulated breeze, no input needed' },
   { id: 'mouse', label: 'Mouse', hint: 'drag to steer, wheel for speed' },
-  { id: 'serial', label: 'Plank', hint: 'the MPU-6050 over USB' },
 ];
 
 export default function WindWorldPage({ node, sendCommand, error }) {
@@ -90,6 +94,8 @@ export default function WindWorldPage({ node, sendCommand, error }) {
 
   const [speed, setSpeed] = useState(5);
   const [direction, setDirection] = useState(180);
+  const [gain, setGain] = useState(3);
+  const gainTouched = useRef(false);
   // Only adopt the reported wind until the user first touches a slider, or
   // an incoming telemetry tick would yank the thumb back mid-adjustment.
   const touched = useRef(false);
@@ -100,7 +106,13 @@ export default function WindWorldPage({ node, sendCommand, error }) {
     if (typeof telemetry.wind_dir === 'number') setDirection(Math.round(telemetry.wind_dir));
   }, [telemetry.wind, telemetry.wind_dir]);
 
+  useEffect(() => {
+    if (gainTouched.current) return;
+    if (typeof telemetry.wind_gain === 'number') setGain(telemetry.wind_gain);
+  }, [telemetry.wind_gain]);
+
   const sendWind = () => sendCommand(node.device_id, 'WIND', { speed, direction });
+  const sendGain = () => sendCommand(node.device_id, 'WIND', { gain });
 
   const telemetryEntries = Object.entries(telemetry);
 
@@ -135,11 +147,33 @@ export default function WindWorldPage({ node, sendCommand, error }) {
         ))}
       </div>
 
-      <section className="panel">
+      <section className="card">
         <h3>Wind</h3>
         <p className="dim">
-          An override. An anemometer publishing on the bus will overwrite this on its
-          next reading.
+          The multiplier scales every anemometer reading before it drives anything, so
+          real wind can be made worth watching. 1 would travel at exactly the reported
+          speed; it starts at 3.
+          {typeof telemetry.wind_steady === 'number'
+            ? ` Direction is ${Math.round(telemetry.wind_steady * 100)}% settled — below
+               about 12% the heading is held rather than chased.`
+            : ''}
+        </p>
+        <Slider
+          label="Multiplier"
+          value={gain}
+          min={0.5}
+          max={12}
+          step={0.5}
+          unit="&times;"
+          onChange={(v) => {
+            gainTouched.current = true;
+            setGain(v);
+          }}
+          onCommit={sendGain}
+        />
+        <p className="dim">
+          Below is an override for when there is no anemometer on the bus — a real
+          reading overwrites it on the next tick.
         </p>
         <Slider
           label="Speed"
@@ -169,19 +203,19 @@ export default function WindWorldPage({ node, sendCommand, error }) {
         />
       </section>
 
-      <section className="panel">
+      <section className="card">
         <h3>Steering</h3>
         <p className="dim">
           {telemetry.pilot_active && telemetry.pilot_active !== telemetry.pilot
-            ? `Asked for ${telemetry.pilot}, but running on ${telemetry.pilot_active}.`
+            ? `Set to ${telemetry.pilot}, but the broker is unreachable, so it is running on ${telemetry.pilot_active}.`
             : 'MQTT drops to Auto by itself while the broker is unreachable, and returns on its own.'}
         </p>
-        <div className="button-row">
+        <div style={ROW}>
           {SOURCES.map((s) => (
             <button
               key={s.id}
               title={s.hint}
-              className={telemetry.pilot === s.id ? 'active' : ''}
+              className="jog-btn" style={telemetry.pilot === s.id ? ON : null}
               onClick={() => sendCommand(node.device_id, 'PILOT', { source: s.id })}
             >
               {s.label}
@@ -190,21 +224,52 @@ export default function WindWorldPage({ node, sendCommand, error }) {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="card">
+        <h3>Alter</h3>
+        <p className="dim">
+          Cracks the ground open, shows the void through it and floods petrol out over
+          everything, then lets it close. Takes about 2s to tear and 5s to heal either
+          side of the duration.
+          {typeof telemetry.alter === 'number' && telemetry.alter > 0
+            ? ` Currently ${Math.round(telemetry.alter * 100)}% open.`
+            : ''}
+        </p>
+        <div style={ROW}>
+          {[5, 10, 30].map((secs) => (
+            <button
+              key={secs}
+              className="jog-btn"
+              onClick={() => sendCommand(node.device_id, 'ALTER', { duration: secs * 1000 })}
+            >
+              {secs}s
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="card">
         <h3>Display</h3>
         <p className="dim">
-          Both start from [display] in the machine config.cfg; these override until it
-          restarts.
+          All of these start from [display] in the machine config.cfg; changing them
+          here overrides that until it restarts.
+          {telemetry.grass === false ? ' Grass is off on this machine (startup only).' : ''}
         </p>
-        <div className="button-row">
+        <div style={ROW}>
           <button
-            className={telemetry.hud ? 'active' : ''}
+            className="jog-btn" style={telemetry.fullscreen ? ON : null}
+            title="Borderless fullscreen. F does the same on the machine itself."
+            onClick={() => sendCommand(node.device_id, 'DISPLAY', { fullscreen: !telemetry.fullscreen })}
+          >
+            Fullscreen {telemetry.fullscreen ? 'on' : 'off'}
+          </button>
+          <button
+            className="jog-btn" style={telemetry.hud ? ON : null}
             onClick={() => sendCommand(node.device_id, 'DISPLAY', { hud: !telemetry.hud })}
           >
             Debug HUD {telemetry.hud ? 'on' : 'off'}
           </button>
           <button
-            className={telemetry.primitives ? 'active' : ''}
+            className="jog-btn" style={telemetry.primitives ? ON : null}
             title="The placeholder boxes and spheres some presets still mix in with the plants"
             onClick={() => sendCommand(node.device_id, 'DISPLAY', { primitives: !telemetry.primitives })}
           >
@@ -213,7 +278,7 @@ export default function WindWorldPage({ node, sendCommand, error }) {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="card">
         <h3>Preset</h3>
         {presets.length === 0 && (
           <p className="dim">
@@ -221,11 +286,11 @@ export default function WindWorldPage({ node, sendCommand, error }) {
             so this fills in once it reconnects.
           </p>
         )}
-        <div className="button-row">
+        <div style={ROW}>
           {presets.map((name) => (
             <button
               key={name}
-              className={telemetry.preset === name ? 'active' : ''}
+              className="jog-btn" style={telemetry.preset === name ? ON : null}
               onClick={() => sendCommand(node.device_id, 'PRESET', { name })}
             >
               {name}
@@ -234,16 +299,16 @@ export default function WindWorldPage({ node, sendCommand, error }) {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="card">
         <h3>Animals</h3>
         <p className="dim">
           Puts one in front of the camera, the same as pressing space on the machine
           itself. {typeof telemetry.animals === 'number' ? `${telemetry.animals} out there now.` : ''}
         </p>
-        <div className="button-row">
-          <button onClick={() => sendCommand(node.device_id, 'SPAWN', {})}>Any</button>
+        <div style={ROW}>
+          <button className="jog-btn" onClick={() => sendCommand(node.device_id, 'SPAWN', {})}>Any</button>
           {species.map((name) => (
-            <button key={name} onClick={() => sendCommand(node.device_id, 'SPAWN', { species: name })}>
+            <button key={name} className="jog-btn" onClick={() => sendCommand(node.device_id, 'SPAWN', { species: name })}>
               {name}
             </button>
           ))}
@@ -252,7 +317,7 @@ export default function WindWorldPage({ node, sendCommand, error }) {
 
       <CommandPanel
         deviceId={node.device_id}
-        capabilities={(caps.subscribes || []).filter((c) => !['WIND', 'PRESET', 'SPAWN', 'PILOT', 'DISPLAY'].includes(c))}
+        capabilities={caps.subscribes || []}
         onCommand={sendCommand}
       />
     </div>

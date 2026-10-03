@@ -9,7 +9,7 @@
 // human-readable name for this sketch
 #define SCRIPT_NAME "bichito_vertical"
 // what this device reports in telemetry, e.g. "[\"light_level\"]"
-#define CAPS_PUBLISHES "[\"light_level1\",\"light_level2\",\"light_max\"]"
+#define CAPS_PUBLISHES "[\"light_level1\",\"light_level2\"]"
 // + any custom capabilities you add below
 #define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\"]"
 
@@ -204,7 +204,6 @@ void loop() {
     JsonDocument doc;
     doc["light_level1"] = lightValue1;
     doc["light_level2"] = lightValue2;
-    doc["light_max"] = light;
     doc["chip_temp"] = temperatureRead();
     publishTelemetry(doc);
   }
