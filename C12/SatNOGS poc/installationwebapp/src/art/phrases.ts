@@ -1,16 +1,18 @@
-// Phrases that arrive inside the received image.
+// The phrase of a pass: the words placed on the satellite's path (src/art/field.ts), in the
+// order it meets them. As it flies over each one, the word starts arriving in the image.
 //
-// The reception view only knows the PhraseGenerator interface, so a smarter generator (words
-// that connect, grammar, words that relate to the pass...) can replace RandomWords later
-// without touching the view. Generators get the whole "phrases" section of the display
-// language, so new word lists (nouns, verbs...) can be added to the language files for them.
+// The rest of the code only knows the PhraseGenerator interface, so a smarter generator (words
+// that connect, grammar, words that relate to the pass...) can replace RandomWords later.
+// Generators get the whole "phrases" section of the display language, so new word lists
+// (nouns, verbs...) can be added to the language files for them.
 import type { Strings } from '../i18n.ts'
 
 export type Vocabulary = Strings['phrases'] // { words: [...] } in src/lang/*.json
 
 export interface PhraseGenerator {
-  // the same seed and vocabulary always give the same phrase: every display agrees on it
-  phrase(seed: number, vocabulary: Vocabulary): string
+  // the words on the path, in order; the same seed and vocabulary always give the same ones,
+  // so every display agrees
+  phrase(seed: number, vocabulary: Vocabulary): string[]
 }
 
 // seeded random numbers in [0, 1) (mulberry32)
@@ -32,13 +34,13 @@ export class RandomWords implements PhraseGenerator {
     readonly maxWords = 6,
   ) {}
 
-  phrase(seed: number, vocabulary: Vocabulary): string {
+  phrase(seed: number, vocabulary: Vocabulary): string[] {
     const rand = random(seed)
-    const pool = [...vocabulary.words]
+    const pool = [...new Set(vocabulary.words)]
     const count = Math.min(pool.length, this.minWords + Math.floor(rand() * (this.maxWords - this.minWords + 1)))
     const picked: string[] = []
     for (let i = 0; i < count; i++) picked.push(pool.splice(Math.floor(rand() * pool.length), 1)[0])
-    return picked.join(' ')
+    return picked
   }
 }
 
@@ -46,3 +48,7 @@ export const phrases: PhraseGenerator = new RandomWords()
 
 // one seed per pass on the timeline: unchanged when it's re-timed (speed, restart)
 export const phraseSeed = (slotId: number, passId: number) => (Math.imul(slotId, 2654435761) ^ passId) >>> 0
+
+// a seed from a word, for things that should look the same for it on every display
+export const textSeed = (text: string) =>
+  [...text].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619), 2166136261) >>> 0

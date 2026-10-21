@@ -50,13 +50,22 @@ copy `en.json` to e.g. `pt.json`, translate the values (keep the `{placeholders}
 
 ## Phrases
 
-With "phrase in the received image" on (Settings), the reception view draws a phrase over
-each image before it starts arriving, so it shows up line by line with the picture. It's only
-on screen: the display draws it on its own copy in memory, the files in ../downloads are never
-changed, and turning the setting off shows the plain image again. The words
-are in the `phrases` section of each language file. Phrases come from `src/art/phrases.ts`:
-`RandomWords` picks 3 to 6 words today; any class with the `PhraseGenerator` interface can
-replace it. The drawing (letters, scan lines, jitter) is `src/art/burn.ts`.
+With "phrase" on (Settings), the words of the language file float around the Earth on both
+globes, standing upright, at the same places on both. A few of them (the phrase) lie on the
+satellite's path; when it flies over one, the word lights up and starts arriving in the
+received image, at that row, left or right as it lies beside the track. When the pass changes,
+the same words drift to new places. Everything comes from the pass on the timeline, so every
+display agrees.
+
+On the signal display the same words show up as the satellite reaches them: written into the
+spectrum on the NOAA waterfall (left or right as in the image), and spelled by the
+constellation's dots for METEOR, which then go back to the signal.
+
+The image is only changed on screen (each display's copy in memory); the files in
+../downloads are never touched. The words are the `phrases` section of each language file.
+`src/art/phrases.ts` picks the phrase (`RandomWords`: 3 to 6 words; any `PhraseGenerator` can
+replace it), `src/art/field.ts` places the words, `src/views/globeWords.ts` shows them on the
+globes and `src/art/burn.ts` draws them into the image.
 
 ## installation.json
 
@@ -71,5 +80,5 @@ operator page (Settings), and saving the file by hand applies too; the other fou
 - `speed`: 1 = real time; `waitSeconds` / `approachSeconds` / `departSeconds`: the gaps around each pass
 - `images`: preferred image per satellite family, `volume`, `imagery` (`esri` or offline `natural`)
 - `hideCursor`: hide the mouse pointer on the displays; `language`: `en` or `es`
-- `phrases`: a generated phrase arrives inside the received image
+- `phrases`: words float around the Earth; the ones the satellite flies over arrive in the image
 - `server.host`: `0.0.0.0` to let displays on other computers connect (open `http://<this pc>:5180/?view=...` there)

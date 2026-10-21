@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { PHRASE_FONT_WEIGHT, burnPhrase } from '../art/burn.ts'
-import { phraseSeed, phrases } from '../art/phrases.ts'
+import { PHRASE_FONT_WEIGHT, burnWords, type ImageWord } from '../art/burn.ts'
+import { phraseSeed } from '../art/phrases.ts'
+import { usePathWords } from '../art/usePathWords.ts'
 import { FONT } from '../colors.ts'
 import { Display } from '../components/Display.tsx'
 import { fmt, useStrings } from '../i18n.ts'
@@ -23,9 +24,9 @@ function makeNoise(ctx: CanvasRenderingContext2D, width: number, count = 4) {
 }
 
 // The image revealed top-down in chunks of rows as the reception progresses.
-// Keyed on the url and the phrase: every state message brings new (equal) pass objects.
-function ImageReceiver(props: { slotId: number; url: string; phrase: string | null; seed: number }) {
-  const { slotId, url, phrase, seed } = props
+// Keyed on the url and the words: every state message brings new (equal) pass objects.
+function ImageReceiver(props: { slotId: number; url: string; words: ImageWord[] | null; seed: number }) {
+  const { slotId, url, words, seed } = props
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -44,7 +45,7 @@ function ImageReceiver(props: { slotId: number; url: string; phrase: string | nu
     const el = new Image()
     el.onload = async () => {
       let composite: CanvasImageSource = el
-      if (phrase) {
+      if (words?.length) {
         try {
           await document.fonts.load(`${PHRASE_FONT_WEIGHT} 32px ${FONT}`)
         } catch {
@@ -56,7 +57,7 @@ function ImageReceiver(props: { slotId: number; url: string; phrase: string | nu
         c.height = el.naturalHeight
         const cc = c.getContext('2d')!
         cc.drawImage(el, 0, 0)
-        burnPhrase(cc, c.width, c.height, phrase, seed)
+        burnWords(cc, c.width, c.height, words, seed)
         composite = c
       }
       W = el.naturalWidth
@@ -104,7 +105,7 @@ function ImageReceiver(props: { slotId: number; url: string; phrase: string | nu
       alive = false
       cancelAnimationFrame(raf)
     }
-  }, [slotId, url, phrase, seed])
+  }, [slotId, url, words, seed])
 
   return <canvas ref={canvasRef} className="rx-image" />
 }
@@ -118,14 +119,14 @@ export function ImageView() {
   const group = slot ? imageGroup(slot.pass) : 'NOAA'
   const image = slot && config ? pickImage(slot.pass, config.images[group] ?? DEFAULT_IMAGE[group] ?? 'normal') : null
   const phase = slot ? phaseAt(slot, now) : null
-  // the phrase that arrives with the image: the same on every display for this pass
+  // the phrase words: each arrives in the image as the satellite flies over it on the globes
   const seed = slot ? phraseSeed(slot.id, slot.pass.id) : 0
-  const phrase = slot && config?.phrases ? phrases.phrase(seed, text.phrases) : null
+  const words = usePathWords(slot)
 
   return (
     <Display title="reception">
       <div className="image-view">
-        {slot && image && <ImageReceiver key={slot.id} slotId={slot.id} url={image.url} phrase={phrase} seed={seed} />}
+        {slot && image && <ImageReceiver key={slot.id} slotId={slot.id} url={image.url} words={words} seed={seed} />}
         {slot && (phase === 'waiting' || phase === 'approach') && (
           <div className="standby">
             <div className="standby-phase">{phase === 'waiting' ? text.image.nextPass : text.image.acquiring}</div>

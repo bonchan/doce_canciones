@@ -102,7 +102,7 @@ export function SettingsPanel() {
         </select>
       </label>
       <label className="field">
-        <span>phrase in the received image</span>
+        <span>phrase: words around the Earth, into the image</span>
         <input type="checkbox" checked={s.phrases} onChange={(e) => set({ phrases: e.target.checked })} />
       </label>
       <label className="field">

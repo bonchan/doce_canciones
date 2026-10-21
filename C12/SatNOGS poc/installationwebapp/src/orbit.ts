@@ -50,14 +50,36 @@ export const NEUQUEN: Station = { name: 'Neuquén', lat: -38.9516, lon: -68.0591
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 const angDiff = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)))
 
-// great-circle destination, all radians
-function destination(lat: number, lon: number, bearing: number, dist: number): [number, number] {
+export const EARTH_RADIUS_KM = R
+
+// great-circle destination, all radians (dist: angle, km / EARTH_RADIUS_KM)
+export function destination(lat: number, lon: number, bearing: number, dist: number): [number, number] {
   // clamped: rounding can push the sine a hair past 1, and asin(1.0000000000000002) is NaN
   const lat2 = Math.asin(clamp(Math.sin(lat) * Math.cos(dist) + Math.cos(lat) * Math.sin(dist) * Math.cos(bearing), -1, 1))
   const lon2 =
     lon +
     Math.atan2(Math.sin(bearing) * Math.sin(dist) * Math.cos(lat), Math.cos(dist) - Math.sin(lat) * Math.sin(lat2))
   return [lat2, lon2]
+}
+
+interface LatLon {
+  lat: number // radians
+  lon: number
+}
+
+// initial bearing from a to b, radians
+export function bearing(a: LatLon, b: LatLon) {
+  const dLon = b.lon - a.lon
+  return Math.atan2(
+    Math.sin(dLon) * Math.cos(b.lat),
+    Math.cos(a.lat) * Math.sin(b.lat) - Math.sin(a.lat) * Math.cos(b.lat) * Math.cos(dLon),
+  )
+}
+
+// great-circle distance, km
+export function distanceKm(a: LatLon, b: LatLon) {
+  const h = Math.sin((b.lat - a.lat) / 2) ** 2 + Math.cos(a.lat) * Math.cos(b.lat) * Math.sin((b.lon - a.lon) / 2) ** 2
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
 type Vec3 = [number, number, number]

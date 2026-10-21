@@ -1,15 +1,18 @@
 import { useEffect, useRef } from 'react'
 import * as Cesium from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
+import { wordField } from '../art/field.ts'
+import { phraseSeed } from '../art/phrases.ts'
 import { COLORS, FONT } from '../colors.ts'
 import { Display } from '../components/Display.tsx'
 import { reloadDisplay, reportError } from '../errors.ts'
 import { fmt, num, strings } from '../i18n.ts'
 import { link, liveSlot, useLink, useTicker } from '../link.ts'
-import { HORIZON_RADIUS_KM, type GeoPoint, type Station } from '../orbit.ts'
+import { HORIZON_RADIUS_KM, bearing, type GeoPoint, type Station } from '../orbit.ts'
 import { CAMERA } from '../params.ts'
 import type { SharedConfig } from '../shared/protocol.ts'
 import { APPROACH_SIM, activeSlot, geometryFor, phaseAt, satTimeAt, stationFor } from '../timeline.ts'
+import { GlobeWords } from './globeWords.ts'
 
 const color = (css: string, alpha = 1) => Cesium.Color.fromCssColorString(css).withAlpha(alpha)
 const atAlt = (g: GeoPoint) => Cesium.Cartesian3.fromRadians(g.lon, g.lat, g.alt * 1000)
@@ -57,15 +60,6 @@ function setImagery(viewer: Cesium.Viewer, imagery: SharedConfig['imagery']) {
 
 const finite = (g: GeoPoint) => Number.isFinite(g.lat) && Number.isFinite(g.lon) && Number.isFinite(g.alt)
 
-// initial bearing from a to b, radians
-function bearing(a: GeoPoint, b: GeoPoint) {
-  const dLon = b.lon - a.lon
-  return Math.atan2(
-    Math.sin(dLon) * Math.cos(b.lat),
-    Math.cos(a.lat) * Math.sin(b.lat) - Math.sin(a.lat) * Math.cos(b.lat) * Math.cos(dLon),
-  )
-}
-
 export function GlobeView() {
   const l = useLink()
   const now = useTicker(250)
@@ -75,8 +69,11 @@ export function GlobeView() {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Cesium.Viewer | null>(null)
   const sourceRef = useRef<Cesium.CustomDataSource | null>(null)
+  const wordsRef = useRef<GlobeWords | null>(null)
   const slotId = slot?.id ?? null
   const passId = slot?.pass.id ?? null
+  const phrasesOn = l.state?.config.phrases ?? false
+  const language = l.state?.config.language
 
   useEffect(() => {
     if (import.meta.env.VITE_CESIUM_TOKEN) Cesium.Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_TOKEN
@@ -98,6 +95,7 @@ export function GlobeView() {
     viewer.dataSources.add(source)
     viewerRef.current = viewer
     sourceRef.current = source
+    wordsRef.current = new GlobeWords(viewer)
 
     // After an error Cesium stops rendering and shows a panel: report it instead, start the
     // loop again, and reload the display if it keeps failing (more than 3 times a minute)
@@ -122,6 +120,35 @@ export function GlobeView() {
   useEffect(() => {
     if (viewerRef.current && imagery) setImagery(viewerRef.current, imagery)
   }, [imagery])
+
+  // the phrase words around the Earth (art/field.ts): the same words, shuffled with each pass
+  useEffect(() => {
+    const words = wordsRef.current
+    const config = link.state?.config
+    const s0 = liveSlot(slotId)
+    if (!words) return
+    if (!s0 || !config || !phrasesOn) {
+      words.clear()
+      return
+    }
+    const g = geometryFor(s0.pass, config)
+    const field = wordField(phraseSeed(s0.id, s0.pass.id), strings().phrases, g)
+    const satT = () => {
+      const s = liveSlot(slotId)
+      return s ? satTimeAt(s, g, link.now()) : g.tLos + 600
+    }
+    let alive = true
+    // the words become images: wait for the font, or they'd keep the fallback one
+    document.fonts
+      .load(`600 96px ${FONT}`)
+      .catch(() => {})
+      .finally(() => {
+        if (alive) words.show(field, satT)
+      })
+    return () => {
+      alive = false
+    }
+  }, [slotId, passId, location, phrasesOn, language])
 
   useEffect(() => {
     const viewer = viewerRef.current
