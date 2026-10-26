@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stepper test - CNC shield</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1e2127; --line: #2e333c; --text: #e6e8eb;
+    --dim: #8b93a1; --accent: #4da3ff; --ok: #3ecf8e; --danger: #e5484d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, sans-serif;
+  }
+  h1 { font-size: 18px; margin: 0; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  #status { color: var(--dim); }
+  #status.on { color: var(--ok); }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 0 0 12px; }
+  button {
+    background: #2a2f38; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 8px 14px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
+  #panic {
+    width: 100%; padding: 22px; font-size: 22px; font-weight: 700; letter-spacing: .1em;
+    background: var(--danger); border-color: var(--danger); color: #fff;
+  }
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .row:last-child { margin-bottom: 0; }
+  .row label { min-width: 90px; color: var(--dim); }
+  input[type=range] { flex: 1; min-width: 120px; accent-color: var(--accent); }
+  input[type=number], input[type=text], select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 8px; font: inherit;
+  }
+  input[type=number] { width: 90px; }
+  .hint { color: var(--dim); font-size: 12px; }
+  .switch { position: relative; width: 46px; height: 24px; flex: none; }
+  .switch input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; position: absolute; z-index: 1; }
+  .switch span { position: absolute; inset: 0; background: #3a404b; border-radius: 12px; transition: .15s; }
+  .switch span::after {
+    content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px;
+    background: #fff; border-radius: 50%; transition: .15s;
+  }
+  .switch input:checked + span { background: var(--ok); }
+  .switch input:checked + span::after { transform: translateX(22px); }
+  .readouts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .readout { background: var(--bg); border-radius: 6px; padding: 10px; }
+  .readout b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .readout small { color: var(--dim); }  #console {
+    height: 300px; overflow-y: auto; background: #0c0d10; border-radius: 6px; padding: 8px;
+    font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all;
+  }
+  #console .tx { color: var(--accent); }
+  #console .err { color: var(--danger); }
+  #console .sys { color: var(--dim); }
+  #cmd { flex: 1; font-family: ui-monospace, Consolas, monospace; }
+  .wide { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Stepper test</h1>
+  <button id="connect" class="primary">Connect</button>
+  <span id="status">disconnected</span>
+</header>
+
+<main>
+  <section>
+    <h2>Motion</h2>
+    <div class="row">
+      <label for="speed">Speed</label>
+      <input type="range" id="speed" min="1" max="4000" value="1000">
+      <input type="number" id="speedNum" min="1" max="20000" value="1000">
+    </div>
+    <div class="row hint"><label></label><span id="speedRpm"></span></div>
+    <div class="row">
+      <label for="accel">Acceleration</label>
+      <input type="range" id="accel" min="50" max="10000" step="50" value="500">
+      <input type="number" id="accelNum" min="1" max="100000" value="500">
+    </div>
+    <div class="row">
+      <label>Direction</label>
+      <span class="hint">reverse</span>
+      <div class="switch"><input type="checkbox" id="dir" checked><span></span></div>
+      <span class="hint">forward</span>
+    </div>
+    <div class="row">
+      <button id="run" class="primary">Run</button>
+      <button id="stop">Stop (ramp down)</button>
+      <button id="free">Free motor</button>
+    </div>
+    <div class="row">
+      <label for="steps">Move</label>
+      <input type="number" id="steps" min="1" value="200">
+      <span class="hint">steps</span>
+      <button id="move">Move</button>
+      <button id="oneRev">1 revolution</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Go and return</h2>
+    <div class="row">
+      <button id="learn" class="primary">1. Start</button>
+      <button id="mark">2. Mark here</button>
+    </div>
+    <div class="row hint">Start spins in the direction of the switch and counts. Mark ramps down; where it stops is the far end.</div>
+    <div class="row">
+      <label>Distance</label>
+      <b id="markDist">-</b>
+    </div>
+    <div class="row">
+      <label for="trips">Round trips</label>
+      <input type="number" id="trips" min="0" value="1">
+      <span class="hint">0 = forever</span>
+    </div>
+    <div class="row">
+      <button id="shuttle" class="primary">3. Go and return</button>
+      <button id="shuttleStop">Stop</button>
+    </div>
+    <div class="row hint" id="tripInfo">&nbsp;</div>
+  </section>
+
+  <section>
+    <h2>Safety</h2>
+    <div class="row"><button id="panic">PANIC</button></div>
+    <div class="row hint">Instant stop and driver off. Also on the Esc key.</div>
+    <div class="row">
+      <label>Driver</label>
+      <span class="hint">off (shaft free)</span>
+      <div class="switch"><input type="checkbox" id="enable" checked><span></span></div>
+      <span class="hint">on (motor holds)</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Live</h2>
+    <div class="readouts">
+      <div class="readout"><small>speed</small><b id="liveSpeed">-</b><small id="liveRpm">&nbsp;</small></div>
+      <div class="readout"><small>position</small><b id="livePos">-</b><small id="liveRevs">&nbsp;</small></div>    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="zero">Zero position</button>
+      <label style="min-width:0"><input type="checkbox" id="telemetry" checked> live telemetry</label>
+    </div>
+    <div class="row hint">Turn telemetry off when hunting for the top speed: sending it costs the Uno a little step timing.</div>
+  </section>
+
+  <section>
+    <h2>Motor</h2>
+    <div class="row">
+      <label for="motorSteps">Full steps/rev</label>
+      <input type="number" id="motorSteps" min="1" value="200">
+    </div>
+    <div class="row">
+      <label for="micro">Microstepping</label>
+      <select id="micro">
+        <option value="1" selected>1 (no jumper)</option>
+        <option value="2">1/2 (M0)</option>
+        <option value="4">1/4 (M1)</option>
+        <option value="8">1/8 (M0+M1)</option>
+        <option value="16">1/16 (M2)</option>
+        <option value="32">1/32 (all three)</option>
+      </select>
+    </div>
+    <div class="row hint">Only used here to show RPM and revolutions. Match it to the jumpers on the shield.</div>
+  </section>
+
+  <section class="wide">
+    <h2>Console</h2>
+    <div id="console"></div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="cmd" placeholder="raw command, e.g. S1500 or ?" autocomplete="off">
+      <button id="send">Send</button>
+      <button id="clear">Clear</button>
+      <label style="min-width:0"><input type="checkbox" id="showTelemetry"> show telemetry lines</label>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const BAUD = 115200;
+const MAX_CONSOLE_LINES = 500;
+
+let port = null, reader = null, writer = null;
+let readDone = null;   // resolves when readLoop has let go of the port
+let gotReady = false;
+const encoder = new TextEncoder();
+
+// ---------- console ----------
+function log(text, cls) {
+  const box = $('console');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 30;
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = text;
+  box.appendChild(div);
+  while (box.childElementCount > MAX_CONSOLE_LINES) box.firstChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+// ---------- serial ----------
+async function connect() {
+  if (!('serial' in navigator)) {
+    log('Web Serial is not available. Use Chrome or Edge on a computer.', 'err');
+    return;
+  }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: BAUD });
+  } catch (e) {
+    log('connect failed: ' + e.message, 'err');
+    port = null;
+    return;
+  }
+  writer = port.writable.getWriter();
+  gotReady = false;
+  setConnected(true);
+  log('connected', 'sys');
+  readDone = readLoop();
+  // an Uno resets on connect and says "ready"; a board that does not reset gets synced here
+  setTimeout(() => { if (port && !gotReady) sync(); }, 2500);
+}
+
+async function disconnect() {
+  const p = port;
+  port = null;
+  try { if (reader) await reader.cancel(); } catch (e) {}
+  try { if (readDone) await readDone; } catch (e) {}   // port can't close while still locked
+  try { if (writer) writer.releaseLock(); } catch (e) {}
+  try { if (p) await p.close(); } catch (e) { log('close failed: ' + e.message, 'err'); }
+  reader = writer = readDone = null;
+  setConnected(false);
+  log('disconnected', 'sys');
+}
+
+async function readLoop() {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  reader = port.readable.getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (line) handleLine(line);
+      }
+    }
+  } catch (e) {
+    log('read error: ' + e.message, 'err');
+  } finally {
+    try { reader.releaseLock(); } catch (e) {}
+  }
+  if (port) disconnect();   // the cable was pulled
+}
+
+function send(cmd, quiet) {
+  if (!writer) { log('not connected', 'err'); return; }
+  writer.write(encoder.encode(cmd === '!' ? cmd : cmd + '\n'))
+    .catch(e => log('write error: ' + e.message, 'err'));
+  if (!quiet) log('> ' + cmd, 'tx');
+}
+
+function handleLine(line) {
+  if (line.startsWith('T ')) {
+    const [, pos, speed, en] = line.split(' ');
+    showLive(Number(pos), Number(speed));
+    $('enable').checked = en === '1';
+    if ($('showTelemetry').checked) log(line, 'sys');
+    return;
+  }
+  if (line === 'ready') {
+    gotReady = true;
+    log(line);
+    sync();
+    return;
+  }
+  if (line.startsWith('mark ')) {
+    const steps = Number(line.slice(5));
+    $('markDist').textContent = steps + ' steps (' + (steps / stepsPerRev()).toFixed(2) + ' rev)';
+  } else if (line.startsWith('trip ')) {
+    const [done, total] = line.slice(5).split('/');
+    $('tripInfo').textContent = 'round trip ' + done + (total === '0' ? '' : ' of ' + total);
+  } else if (line === 'done') {
+    $('tripInfo').textContent += ', done';
+  }
+  log(line, line.startsWith('err') || line === 'PANIC' ? 'err' : '');
+}
+
+// push the page's settings to the board
+function sync() {
+  send('S' + $('speedNum').value);
+  send('A' + $('accelNum').value);
+  send('D' + ($('dir').checked ? 1 : 0));
+  send('T' + ($('telemetry').checked ? 1 : 0));
+  send('?');
+}
+
+function setConnected(on) {
+  $('connect').textContent = on ? 'Disconnect' : 'Connect';
+  $('status').textContent = on ? 'connected' : 'disconnected';
+  $('status').classList.toggle('on', on);
+}
+
+// ---------- readouts ----------
+function stepsPerRev() {
+  return Math.max(1, Number($('motorSteps').value) || 1) * Number($('micro').value);
+}
+
+function showLive(pos, speed) {
+  const spr = stepsPerRev();
+  $('liveSpeed').textContent = speed + ' steps/s';
+  $('liveRpm').textContent = (Math.abs(speed) * 60 / spr).toFixed(1) + ' RPM';
+  $('livePos').textContent = pos + ' steps';
+  $('liveRevs').textContent = (pos / spr).toFixed(2) + ' rev';
+}
+
+function showSpeedRpm() {
+  const rpm = Number($('speedNum').value) * 60 / stepsPerRev();
+  $('speedRpm').textContent = '= ' + rpm.toFixed(1) + ' RPM';
+}
+
+// ---------- controls ----------
+// slider + number box that stay in sync and send while dragging without flooding the serial port
+function bindValue(sliderId, numId, prefix, onChange) {
+  const slider = $(sliderId), num = $(numId);
+  let timer = null, pending = false;
+
+  function sendNow() {
+    pending = false;
+    if (writer) send(prefix + num.value);
+  }
+  function schedule() {
+    pending = true;
+    if (timer) return;
+    timer = setTimeout(() => { timer = null; if (pending) sendNow(); }, 100);
+  }
+  slider.addEventListener('input', () => { num.value = slider.value; onChange(); schedule(); });
+  num.addEventListener('change', () => {
+    num.value = Math.max(1, Math.round(Number(num.value) || 1));
+    slider.value = num.value;
+    onChange();
+    sendNow();
+  });
+}
+
+bindValue('speed', 'speedNum', 'S', showSpeedRpm);
+bindValue('accel', 'accelNum', 'A', () => {});
+
+$('connect').addEventListener('click', () => port ? disconnect() : connect());
+$('dir').addEventListener('change', e => send('D' + (e.target.checked ? 1 : 0)));
+$('enable').addEventListener('change', e => send('E' + (e.target.checked ? 1 : 0)));
+$('telemetry').addEventListener('change', e => send('T' + (e.target.checked ? 1 : 0)));
+$('run').addEventListener('click', () => send('R'));
+$('stop').addEventListener('click', () => send('X'));
+$('free').addEventListener('click', () => send('E0'));   // driver off, no holding current
+$('zero').addEventListener('click', () => send('Z'));
+$('learn').addEventListener('click', () => {
+  $('markDist').textContent = 'counting...';
+  $('tripInfo').innerHTML = '&nbsp;';
+  send('L');
+});
+$('mark').addEventListener('click', () => send('K'));
+$('shuttle').addEventListener('click', () => {
+  $('tripInfo').textContent = 'going...';
+  send('G' + Math.max(0, Math.round(Number($('trips').value) || 0)));
+});
+$('shuttleStop').addEventListener('click', () => send('X'));
+$('panic').addEventListener('click', () => send('!'));
+
+function moveSteps(n) {
+  send('M' + ($('dir').checked ? n : -n));
+}
+$('move').addEventListener('click', () => moveSteps(Math.max(1, Math.round(Number($('steps').value) || 1))));
+$('oneRev').addEventListener('click', () => moveSteps(stepsPerRev()));
+
+$('motorSteps').addEventListener('change', showSpeedRpm);
+$('micro').addEventListener('change', showSpeedRpm);
+
+function sendRaw() {
+  const text = $('cmd').value.trim();
+  if (!text) return;
+  send(text);
+  $('cmd').value = '';
+}
+$('send').addEventListener('click', sendRaw);
+$('cmd').addEventListener('keydown', e => { if (e.key === 'Enter') sendRaw(); });
+$('clear').addEventListener('click', () => { $('console').textContent = ''; });
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && writer) send('!');
+});
+
+if ('serial' in navigator) {
+  navigator.serial.addEventListener('disconnect', e => { if (e.target === port) disconnect(); });
+}
+
+showSpeedRpm();
+</script>
+</body>
+</html>

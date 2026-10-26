@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>MPU6050 3D Vectors</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      background: #111;
+      color: #ddd;
+      font-family: monospace;
+      overflow: hidden;
+    }
+
+    #ui {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1;
+      line-height: 1.6;
+    }
+
+    button {
+      font: inherit;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+
+    .a {
+      color: #ff5a5a;
+    }
+
+    .g {
+      color: #5ac8ff;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="ui">
+    <button id="connect">Connect</button> <span id="status">disconnected</span>
+    <div class="a">Accel (m/s²): <span id="acc">-</span></div>
+    <div class="g">Gyro (rad/s): <span id="gyr">-</span></div>
+    <div style="color:#888">drag to rotate view</div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    // ---- 3D scene ----
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(4, 3, 6);
+    camera.lookAt(0, 0, 0);
+
+    const world = new THREE.Group();   // rotated by mouse drag
+    scene.add(world);
+    world.add(new THREE.GridHelper(8, 8, 0x444444, 0x2a2a2a));
+    world.add(new THREE.AxesHelper(2.5)); // red=X green=Y(up) blue=Z
+
+    const accArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 1, 0xff5a5a, 0.3, 0.15);
+    const gyrArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 1, 0x5ac8ff, 0.3, 0.15);
+    world.add(accArrow, gyrArrow);
+
+    // sensor (x,y,z) -> three (x,z,-y) so sensor Z is "up"
+    const toScene = (x, y, z) => new THREE.Vector3(x, z, -y);
+
+    function setArrow(arrow, v, scale) {
+      const len = v.length();
+      if (len < 1e-4) { arrow.setLength(0.001); return; }
+      arrow.setDirection(v.clone().normalize());
+      arrow.setLength(Math.min(len * scale, 4), 0.3, 0.15);
+    }
+
+    (function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    })();
+
+    addEventListener("resize", () => {
+      renderer.setSize(innerWidth, innerHeight);
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+    });
+
+    let drag = false, lx = 0, ly = 0;
+    renderer.domElement.addEventListener("pointerdown", e => { drag = true; lx = e.clientX; ly = e.clientY; });
+    addEventListener("pointerup", () => drag = false);
+    addEventListener("pointermove", e => {
+      if (!drag) return;
+      world.rotation.y += (e.clientX - lx) * 0.01;
+      world.rotation.x += (e.clientY - ly) * 0.01;
+      lx = e.clientX; ly = e.clientY;
+    });
+
+    // ---- Web Serial ----
+    // Expects lines like: ax,ay,az,gx,gy,gz
+    const $ = id => document.getElementById(id);
+    const fmt = a => a.map(n => n.toFixed(2).padStart(7)).join(" ");
+
+    function handleLine(line) {
+      const p = line.trim().split(",").map(Number);
+      if (p.length < 6 || p.some(isNaN)) return;
+      const [ax, ay, az, gx, gy, gz] = p;
+      setArrow(accArrow, toScene(ax, ay, az), 2 / 9.81); // 1 g = 2 units
+      setArrow(gyrArrow, toScene(gx, gy, gz), 0.5);      // 4 rad/s = 2 units
+      $("acc").textContent = fmt([ax, ay, az]);
+      $("gyr").textContent = fmt([gx, gy, gz]);
+    }
+
+    $("connect").onclick = async () => {
+      if (!("serial" in navigator)) { alert("Web Serial needs Chrome or Edge."); return; }
+      try {
+        const port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+        $("status").textContent = "connected";
+
+        const decoder = new TextDecoderStream();
+        port.readable.pipeTo(decoder.writable);
+        const reader = decoder.readable.getReader();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += value;
+          const lines = buf.split("\n");
+          buf = lines.pop();
+          lines.forEach(handleLine);
+        }
+      } catch (e) {
+        $("status").textContent = "error: " + e.message;
+      }
+    };
+  </script>
+</body>
+
+</html>
