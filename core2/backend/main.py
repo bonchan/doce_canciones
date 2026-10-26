@@ -123,6 +123,6 @@ def webapp(path: str):
 
 
 if __name__ == "__main__":
-    import uvicorn
-    # "::" listens on IPv6 and IPv4 at once (Linux dual-stack)
-    uvicorn.run(app, host="::", port=8000)
+    # same as the service: IPv6 + IPv4 on port 8000 (see run.py for why not uvicorn --host ::)
+    import runpy
+    runpy.run_path(str(Path(__file__).with_name("run.py")), run_name="__main__")
