@@ -31,6 +31,12 @@ constexpr const char* FW_VERSION = "0.0.1";
 #define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\"]"
 #endif
 
+// Sketches that send/receive bigger payloads (e.g. esp32C3_breathe's curves)
+// can #define MQTT_BUFFER_SIZE before including this file.
+#ifndef MQTT_BUFFER_SIZE
+#define MQTT_BUFFER_SIZE 512
+#endif
+
 // ── timing ───────────────────────────────────────────────────────────────
 static unsigned long lastTelemetryPub = 0;
 static unsigned long lastRetryMs      = 0;
@@ -322,7 +328,7 @@ void setupNetwork() {
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LED_OFF);
 
-    mqttClient.setBufferSize(512);
+    mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
     mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
     mqttClient.setCallback(mqttCallback);
 
