@@ -4,12 +4,17 @@ import CommandPanel from '../../components/CommandPanel';
 
 // breathe — esp32C3_breathe, two one-way DC motors on an L298N blowing into
 // the same funnel: one inhales, the other exhales. A breath is two curves
-// (one per motor) of speed samples 0..255 spread over `period` ms, looped
-// forever. You draw them here; the device stores them in flash and
-// publishes what it has (retained) on .../config, which shows up as
-// node.config.
+// (one per motor) looped over `period` ms.
 //
-//   CURVE   {period, in: [..], out: [..]}  any subset; 2..128 samples each
+// Each curve is edited here as a few control points joined by a smooth line
+// (monotone cubic, so it never overshoots past a point: flat stays flat, a
+// peak is where you put it). On save the page samples that line into
+// SAMPLES speeds (0..255) for the device to play, and sends the points along
+// so the page can reopen them exactly; the device stores both in flash and
+// publishes them (retained) on .../config, which shows up as node.config.
+//
+//   CURVE   {period, in: [..], out: [..], pin: [[t,v]..], pout: [[t,v]..]}
+//           t = 0..999 (thousandths of the breath), v = 0..255
 //   PAUSE / RESUME
 //   RATE  {value}  0.1..10   time multiplier
 //   DEPTH {value}  0..1      speed multiplier
@@ -18,140 +23,302 @@ import CommandPanel from '../../components/CommandPanel';
 // See the command block in esp32C3_breathe.ino.
 
 const SAMPLES = 64;
-const W = 1000;      // viewBox width
-const H = 200;       // viewBox height per lane
+const MAX_POINTS = 32;  // firmware limit per curve
+const W = 1000;         // viewBox width
+const H = 200;          // viewBox height per lane
+const LANE_PX = 170;    // lane height on screen
+const HIT_POINT_PX = 12;
+const HIT_LINE_PX = 12;
 const INHALE = '#3b82f6';
 const EXHALE = '#f97316';
+const DELETE = '#ef4444';
 const ROW = { display: 'flex', flexWrap: 'wrap', gap: 8, margin: '8px 0', alignItems: 'center' };
 const ON = { outline: '2px solid currentColor', opacity: 1 };
 
-// ── curve helpers ─────────────────────────────────────────────────────────
-// Same shape the firmware uses for its defaults: a half-sine from `from`
-// to `to` (fractions of the breath), 0 elsewhere.
-function bump(n, from, to, peak) {
-  return Array.from({ length: n }, (_, i) => {
-    const x = (i / n - from) / (to - from);
-    return x > 0 && x < 1 ? Math.round(peak * Math.sin(Math.PI * x)) : 0;
-  });
+// ── curve math ────────────────────────────────────────────────────────────
+// points: [{t: 0..999, v: 0..255}] sorted by t. Returns f(x) for x = 0..1
+// through the breath. The curve loops: after the last point it heads back to
+// the first one. Monotone cubic (Fritsch–Butland tangents).
+function makeCurve(points) {
+  const n = points.length;
+  if (n === 0) return () => 0;
+  if (n === 1) return () => points[0].v;
+
+  const P = points.map((p) => ({ x: p.t / 1000, y: p.v }));
+  // two wrapped copies on each side, so every real segment has neighbours
+  const E = [
+    ...P.slice(-2).map((p) => ({ x: p.x - 1, y: p.y })),
+    ...P,
+    ...P.slice(0, 2).map((p) => ({ x: p.x + 1, y: p.y })),
+  ];
+  const h = [];
+  const d = [];
+  for (let k = 0; k < E.length - 1; k++) {
+    h[k] = E[k + 1].x - E[k].x;
+    d[k] = h[k] > 0 ? (E[k + 1].y - E[k].y) / h[k] : 0;
+  }
+  const m = [];
+  for (let k = 1; k < E.length - 1; k++) {
+    if (d[k - 1] * d[k] <= 0) m[k] = 0;
+    else {
+      const w1 = 2 * h[k] + h[k - 1];
+      const w2 = h[k] + 2 * h[k - 1];
+      m[k] = (w1 + w2) / (w1 / d[k - 1] + w2 / d[k]);
+    }
+  }
+
+  return (x) => {
+    let k = 1;
+    while (k < E.length - 3 && x >= E[k + 1].x) k++;
+    const a = E[k];
+    const b = E[k + 1];
+    const hk = b.x - a.x;
+    if (hk <= 0) return a.y;
+    const s = (x - a.x) / hk;
+    const s2 = s * s;
+    const s3 = s2 * s;
+    const y =
+      (2 * s3 - 3 * s2 + 1) * a.y +
+      (s3 - 2 * s2 + s) * hk * m[k] +
+      (-2 * s3 + 3 * s2) * b.y +
+      (s3 - s2) * hk * m[k + 1];
+    return Math.max(0, Math.min(255, y));
+  };
 }
 
-const addCurves = (a, b) => a.map((v, i) => Math.min(255, v + b[i]));
-
-const PRESETS = {
-  Calm: () => ({ period: 8000, in: bump(SAMPLES, 0, 0.4, 200), out: bump(SAMPLES, 0.5, 0.9, 180) }),
-  Deep: () => ({ period: 12000, in: bump(SAMPLES, 0, 0.45, 255), out: bump(SAMPLES, 0.5, 0.95, 230) }),
-  Panting: () => ({ period: 1500, in: bump(SAMPLES, 0, 0.45, 220), out: bump(SAMPLES, 0.5, 0.95, 220) }),
-  Sigh: () => ({
-    period: 10000,
-    in: addCurves(bump(SAMPLES, 0, 0.25, 200), bump(SAMPLES, 0.25, 0.4, 150)),
-    out: bump(SAMPLES, 0.45, 0.95, 160),
-  }),
-  Hold: () => ({ period: 10000, in: bump(SAMPLES, 0, 0.3, 200), out: bump(SAMPLES, 0.6, 0.9, 200) }),
+const toSamples = (points, n = SAMPLES) => {
+  const f = makeCurve(points);
+  return Array.from({ length: n }, (_, i) => Math.round(f(i / n)));
 };
 
-// 3-tap moving average that wraps around, since the breath loops
-function smooth(v) {
-  const n = v.length;
-  return v.map((x, i) => Math.round((v[(i - 1 + n) % n] + 2 * x + v[(i + 1) % n]) / 4));
-}
+const pt = (t, v) => ({ t: Math.round(t * 1000), v });
+
+const PRESETS = {
+  Calm: () => ({ period: 8000, pin: [pt(0, 0), pt(0.2, 200), pt(0.4, 0)], pout: [pt(0.5, 0), pt(0.7, 180), pt(0.9, 0)] }),
+  Deep: () => ({ period: 12000, pin: [pt(0, 0), pt(0.22, 255), pt(0.45, 0)], pout: [pt(0.5, 0), pt(0.72, 230), pt(0.95, 0)] }),
+  Panting: () => ({ period: 1500, pin: [pt(0, 0), pt(0.22, 220), pt(0.45, 0)], pout: [pt(0.5, 0), pt(0.72, 220), pt(0.95, 0)] }),
+  Sigh: () => ({
+    period: 10000,
+    pin: [pt(0, 0), pt(0.12, 200), pt(0.24, 120), pt(0.31, 170), pt(0.4, 0)],
+    pout: [pt(0.45, 0), pt(0.7, 160), pt(0.95, 0)],
+  }),
+  Hold: () => ({ period: 10000, pin: [pt(0, 0), pt(0.15, 200), pt(0.3, 0)], pout: [pt(0.6, 0), pt(0.75, 200), pt(0.9, 0)] }),
+};
 
 const sameCurve = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]);
+const samePoints = (a, b) => a.length === b.length && a.every((p, i) => p.t === b[i].t && p.v === b[i].v);
+
+// Points from the device, or — for curves saved without points (older
+// firmware, or samples sent by hand) — one point every 8th sample.
+function pointsFromConfig(raw, samples) {
+  if (Array.isArray(raw) && raw.length > 0) {
+    return raw.map(([t, v]) => ({ t, v })).sort((a, b) => a.t - b.t);
+  }
+  const n = samples.length;
+  const step = Math.max(1, Math.round(n / 8));
+  const out = [];
+  for (let i = 0; i < n; i += step) out.push({ t: Math.round((i / n) * 1000), v: samples[i] });
+  return out;
+}
 
 function fromConfig(config) {
   if (!config || !Array.isArray(config.in) || !Array.isArray(config.out)) return null;
-  return { period: config.period || 8000, in: config.in, out: config.out };
+  return {
+    period: config.period || 8000,
+    in: config.in,
+    out: config.out,
+    pin: pointsFromConfig(config.pin, config.in),
+    pout: pointsFromConfig(config.pout, config.out),
+  };
 }
 
-// Polygon points for a looping curve: one point per sample, plus a closing
-// point at the right edge with sample 0's value (the device blends the last
-// sample back into the first).
-function curvePoints(v) {
+// polyline (viewBox units) for a looping list of samples, closing back to
+// sample 0 at the right edge like the device does
+function samplePolyline(v) {
   const n = v.length;
   const pts = v.map((x, i) => `${(i / n) * W},${H - (x / 255) * H}`);
   pts.push(`${W},${H - (v[0] / 255) * H}`);
-  return pts;
+  return pts.join(' ');
+}
+
+function curvePolyline(f, steps = 250) {
+  const pts = [];
+  for (let i = 0; i <= steps; i++) pts.push(`${(i / steps) * W},${H - (f(i / steps) / 255) * H}`);
+  return pts.join(' ');
 }
 
 // ── one motor's lane ──────────────────────────────────────────────────────
-function Lane({ label, color, values, saved, onChange, phase, period, live }) {
-  const svgRef = useRef(null);
-  const last = useRef(null);  // last painted [index, value], to fill gaps on fast drags
+// Drag a point to move it. Drag from the line to add a point there. Click a
+// point in delete mode (or right-click it any time) to remove it.
+function Lane({ label, color, points, onChange, saved, phase, period, live, deleteMode }) {
+  const boxRef = useRef(null);
+  const drag = useRef(null);  // index of the point being dragged
+  const [hover, setHover] = useState(null);  // 'point' | 'line' | null
+  const [dragging, setDragging] = useState(false);
 
-  const paintAt = (e) => {
-    const r = svgRef.current.getBoundingClientRect();
-    const n = values.length;
-    const i = Math.max(0, Math.min(n - 1, Math.floor(((e.clientX - r.left) / r.width) * n)));
-    const v = Math.max(0, Math.min(255, Math.round((1 - (e.clientY - r.top) / r.height) * 255)));
-    const next = values.slice();
-    const [pi, pv] = last.current || [i, v];
-    const steps = Math.abs(i - pi);
-    for (let s = 0; s <= steps; s++) {
-      const k = steps === 0 ? 1 : s / steps;
-      next[Math.round(pi + (i - pi) * k)] = Math.round(pv + (v - pv) * k);
-    }
-    last.current = [i, v];
-    onChange(next);
+  const f = makeCurve(points);
+
+  const locate = (e) => {
+    const r = boxRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(r.width, e.clientX - r.left));
+    const y = Math.max(0, Math.min(r.height, e.clientY - r.top));
+    return { x, y, w: r.width, h: r.height };
   };
 
-  const pts = curvePoints(values);
-  const area = `0,${H} ${pts.join(' ')} ${W},${H}`;
+  const hitPoint = ({ x, y, w, h }) => {
+    let best = -1;
+    let bestDist = HIT_POINT_PX;
+    points.forEach((p, i) => {
+      const dist = Math.hypot((p.t / 1000) * w - x, (1 - p.v / 255) * h - y);
+      if (dist <= bestDist) {
+        best = i;
+        bestDist = dist;
+      }
+    });
+    return best;
+  };
+
+  const onLine = ({ x, y, w, h }) => Math.abs((1 - f(x / w) / 255) * h - y) <= HIT_LINE_PX;
+
+  const remove = (i) => onChange(points.filter((_, j) => j !== i));
+
+  // Keep the point between its neighbours so the order (and the index being
+  // dragged) never changes under the pointer.
+  const moveTo = (i, { x, y, w, h }) => {
+    const lo = i > 0 ? points[i - 1].t + 1 : 0;
+    const hi = i < points.length - 1 ? points[i + 1].t - 1 : 999;
+    const t = Math.max(lo, Math.min(hi, Math.round((x / w) * 1000)));
+    const v = Math.max(0, Math.min(255, Math.round((1 - y / h) * 255)));
+    onChange(points.map((p, j) => (j === i ? { t, v } : p)));
+  };
+
+  const onPointerDown = (e) => {
+    if (e.button === 2) return;  // right-click is handled by onContextMenu
+    const at = locate(e);
+    const i = hitPoint(at);
+
+    if (deleteMode) {
+      if (i >= 0) remove(i);
+      return;
+    }
+    if (i >= 0) {
+      drag.current = i;  // dragging an existing point never creates one
+    } else if (onLine(at) && points.length < MAX_POINTS) {
+      const t = Math.min(999, Math.round((at.x / at.w) * 1000));
+      if (points.some((p) => p.t === t)) return;
+      const v = Math.round(f(t / 1000));
+      const next = [...points, { t, v }].sort((a, b) => a.t - b.t);
+      drag.current = next.findIndex((p) => p.t === t);
+      onChange(next);
+    } else {
+      return;
+    }
+    setDragging(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove = (e) => {
+    const at = locate(e);
+    if (drag.current !== null) {
+      moveTo(drag.current, at);
+      return;
+    }
+    setHover(hitPoint(at) >= 0 ? 'point' : !deleteMode && onLine(at) ? 'line' : null);
+  };
+
+  const endDrag = () => {
+    drag.current = null;
+    setDragging(false);
+  };
+
+  let cursor = 'default';
+  if (deleteMode) cursor = hover === 'point' ? 'pointer' : 'default';
+  else if (dragging) cursor = 'grabbing';
+  else if (hover === 'point') cursor = 'grab';
+  else if (hover === 'line') cursor = 'copy';
+
+  const line = curvePolyline(f);
+  const drawn = toSamples(points);
   const seconds = period / 1000;
   const tickEvery = seconds > 20 ? 5 : seconds > 6 ? 1 : 0.5;
   const ticks = [];
-  for (let s = tickEvery; s < seconds; s += tickEvery) ticks.push(s);
+  for (let s = tickEvery; s < seconds - 1e-9; s += tickEvery) ticks.push(s);
 
   return (
     <div style={{ margin: '10px 0' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <b style={{ color }}>{label}</b>
         <span className="dim" style={{ fontVariantNumeric: 'tabular-nums' }}>
-          {typeof live === 'number' ? `duty now ${live}` : ''}
+          {points.length} points{typeof live === 'number' ? ` · duty now ${live}` : ''}
         </span>
       </div>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
+      <div
+        ref={boxRef}
         style={{
-          width: '100%',
-          height: 150,
-          display: 'block',
-          border: '1px solid var(--border)',
+          position: 'relative',
+          height: LANE_PX,
+          border: `1px solid ${deleteMode ? DELETE : 'var(--border)'}`,
           borderRadius: 6,
           background: 'var(--code-bg)',
           touchAction: 'none',
-          cursor: 'crosshair',
+          userSelect: 'none',
+          cursor,
         }}
-        onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId);
-          last.current = null;
-          paintAt(e);
-        }}
-        onPointerMove={(e) => {
-          if (e.buttons & 1) paintAt(e);
-        }}
-        onPointerUp={() => {
-          last.current = null;
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onPointerLeave={() => drag.current === null && setHover(null)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          const i = hitPoint(locate(e));
+          if (i >= 0) remove(i);
         }}
       >
-        {[0.25, 0.5, 0.75].map((f) => (
-          <line key={f} x1={0} x2={W} y1={H * f} y2={H * f} stroke="var(--border)" vectorEffect="non-scaling-stroke" />
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
+        >
+          {[0.25, 0.5, 0.75].map((g) => (
+            <line key={g} x1={0} x2={W} y1={H * g} y2={H * g} stroke="var(--border)" vectorEffect="non-scaling-stroke" />
+          ))}
+          {ticks.map((s) => (
+            <line key={s} x1={(s / seconds) * W} x2={(s / seconds) * W} y1={0} y2={H}
+              stroke="var(--border)" vectorEffect="non-scaling-stroke" />
+          ))}
+          <polygon points={`0,${H} ${line} ${W},${H}`} fill={color} fillOpacity={0.22} />
+          <polyline points={line} fill="none" stroke={color} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+          {saved && !sameCurve(saved, drawn) && (
+            <polyline points={samplePolyline(saved)} fill="none" stroke="var(--text)"
+              strokeWidth={1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
+          )}
+          {typeof phase === 'number' && (
+            <line x1={phase * W} x2={phase * W} y1={0} y2={H} stroke="var(--text-h)" strokeWidth={2}
+              vectorEffect="non-scaling-stroke" />
+          )}
+        </svg>
+        {/* points as HTML so they stay round while the svg stretches */}
+        {points.map((p, i) => (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              left: `${(p.t / 1000) * 100}%`,
+              top: `${(1 - p.v / 255) * 100}%`,
+              width: 12,
+              height: 12,
+              marginLeft: -6,
+              marginTop: -6,
+              borderRadius: '50%',
+              background: deleteMode ? DELETE : color,
+              border: '2px solid var(--bg)',
+              boxShadow: '0 0 0 1px var(--text-h)',
+              pointerEvents: 'none',
+            }}
+          />
         ))}
-        {ticks.map((s) => (
-          <line key={s} x1={(s / seconds) * W} x2={(s / seconds) * W} y1={0} y2={H}
-            stroke="var(--border)" vectorEffect="non-scaling-stroke" />
-        ))}
-        <polygon points={area} fill={color} fillOpacity={0.25} />
-        <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth={2} vectorEffect="non-scaling-stroke" />
-        {saved && !sameCurve(saved, values) && (
-          <polyline points={curvePoints(saved).join(' ')} fill="none" stroke="var(--text)"
-            strokeWidth={1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
-        )}
-        {typeof phase === 'number' && (
-          <line x1={phase * W} x2={phase * W} y1={0} y2={H} stroke="var(--text-h)" strokeWidth={2}
-            vectorEffect="non-scaling-stroke" />
-        )}
-      </svg>
+      </div>
     </div>
   );
 }
@@ -189,12 +356,27 @@ export default function BreathePage({ node, sendCommand, error }) {
     setDirty(true);
   };
 
+  const [deleteMode, setDeleteMode] = useState(false);
+
+  const drawnIn = toSamples(draft.pin);
+  const drawnOut = toSamples(draft.pout);
   const matchesDevice =
-    saved && saved.period === draft.period && sameCurve(saved.in, draft.in) && sameCurve(saved.out, draft.out);
+    saved &&
+    saved.period === draft.period &&
+    sameCurve(saved.in, drawnIn) &&
+    sameCurve(saved.out, drawnOut) &&
+    samePoints(saved.pin, draft.pin) &&
+    samePoints(saved.pout, draft.pout);
 
   const saveToDevice = () => {
-    sendCommand(node.device_id, 'CURVE', { period: draft.period, in: draft.in, out: draft.out });
-    // stays "dirty" until the device's retained config echoes it back
+    sendCommand(node.device_id, 'CURVE', {
+      period: draft.period,
+      in: drawnIn,
+      out: drawnOut,
+      pin: draft.pin.map((p) => [p.t, p.v]),
+      pout: draft.pout.map((p) => [p.t, p.v]),
+    });
+    // shows "Not saved yet" until the device's retained config echoes it back
     setDirty(false);
   };
 
@@ -265,8 +447,10 @@ export default function BreathePage({ node, sendCommand, error }) {
       <section className="card">
         <h3>Breath</h3>
         <p className="dim">
-          Draw each motor's speed over one breath; it loops. Higher = faster. The
-          dashed line is what's saved on the device, when it differs from your drawing.
+          Each motor's speed over one breath; it loops. Higher = faster. Drag a
+          point to move it, drag from the line to add one. Delete mode (or
+          right-click a point) removes points. The dashed line is what's saved on
+          the device, when it differs from yours.
         </p>
 
         <div style={ROW}>
@@ -292,20 +476,23 @@ export default function BreathePage({ node, sendCommand, error }) {
             style={{ width: 80 }}
           />
           <span>seconds</span>
+          <button
+            className="jog-btn"
+            style={deleteMode ? { ...ON, color: DELETE } : null}
+            onClick={() => setDeleteMode((d) => !d)}
+          >
+            {deleteMode ? 'Delete mode: on' : 'Delete mode'}
+          </button>
         </div>
 
-        <Lane label="Inhale" color={INHALE} values={draft.in} saved={saved && saved.in}
-          onChange={(v) => edit({ in: v })} phase={phase} period={draft.period} live={telemetry.inhale} />
-        <div style={ROW}>
-          <button className="jog-btn" onClick={() => edit({ in: smooth(draft.in) })}>Smooth inhale</button>
-          <button className="jog-btn" onClick={() => edit({ in: Array(draft.in.length).fill(0) })}>Clear inhale</button>
-        </div>
+        <Lane label="Inhale" color={INHALE} points={draft.pin} onChange={(p) => edit({ pin: p })}
+          saved={saved && saved.in} phase={phase} period={draft.period} live={telemetry.inhale} deleteMode={deleteMode} />
+        <Lane label="Exhale" color={EXHALE} points={draft.pout} onChange={(p) => edit({ pout: p })}
+          saved={saved && saved.out} phase={phase} period={draft.period} live={telemetry.exhale} deleteMode={deleteMode} />
 
-        <Lane label="Exhale" color={EXHALE} values={draft.out} saved={saved && saved.out}
-          onChange={(v) => edit({ out: v })} phase={phase} period={draft.period} live={telemetry.exhale} />
         <div style={ROW}>
-          <button className="jog-btn" onClick={() => edit({ out: smooth(draft.out) })}>Smooth exhale</button>
-          <button className="jog-btn" onClick={() => edit({ out: Array(draft.out.length).fill(0) })}>Clear exhale</button>
+          <button className="jog-btn" onClick={() => edit({ pin: [] })}>Clear inhale</button>
+          <button className="jog-btn" onClick={() => edit({ pout: [] })}>Clear exhale</button>
         </div>
 
         <div style={ROW}>

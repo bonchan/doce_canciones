@@ -40,6 +40,19 @@ struct Curve {
 };
 
 Curve curveIn, curveOut;
+
+// The page edits each curve as a few control points and turns them into the
+// samples above itself. The device never plays the points; it just keeps
+// them so the page can reopen the curve exactly as it was drawn.
+// t = 0..999 (thousandths of the breath), v = 0..255.
+const int MAX_POINTS = 32;
+
+struct Points {
+  uint8_t raw[MAX_POINTS * 3];  // per point: t high byte, t low byte, v
+  int n;
+};
+
+Points pointsIn, pointsOut;
 uint32_t periodMs = 8000;
 
 // Below this duty the motors hum but don't turn. Any non-zero curve value
@@ -72,6 +85,8 @@ void bump(Curve& c, float from, float to, int peak) {
 void setDefaults() {
   bump(curveIn, 0.0, 0.4, 200);
   bump(curveOut, 0.5, 0.9, 180);
+  pointsIn.n = 0;   // no points: the page makes some up from the samples
+  pointsOut.n = 0;
   periodMs = 8000;
   minDuty = 70;
   rate = 1.0;
@@ -87,11 +102,21 @@ void loadCurve(const char* key, Curve& c) {
   }
 }
 
+void loadPoints(const char* key, Points& p) {
+  size_t n = prefs.getBytesLength(key);
+  if (n % 3 == 0 && n <= sizeof(p.raw)) {
+    prefs.getBytes(key, p.raw, n);
+    p.n = n / 3;
+  }
+}
+
 void loadSettings() {
   setDefaults();
   prefs.begin("breathe", false);
   loadCurve("in", curveIn);
   loadCurve("out", curveOut);
+  loadPoints("pin", pointsIn);
+  loadPoints("pout", pointsOut);
   periodMs = prefs.getUInt("period", periodMs);
   minDuty  = prefs.getUChar("min", minDuty);
   rate     = prefs.getFloat("rate", rate);
@@ -101,10 +126,22 @@ void loadSettings() {
 void saveSettings() {
   prefs.putBytes("in", curveIn.v, curveIn.n);
   prefs.putBytes("out", curveOut.v, curveOut.n);
+  // putBytes with 0 length fails, so empty point lists are removed instead
+  if (pointsIn.n)  prefs.putBytes("pin", pointsIn.raw, pointsIn.n * 3);   else prefs.remove("pin");
+  if (pointsOut.n) prefs.putBytes("pout", pointsOut.raw, pointsOut.n * 3); else prefs.remove("pout");
   prefs.putUInt("period", periodMs);
   prefs.putUChar("min", minDuty);
   prefs.putFloat("rate", rate);
   prefs.putFloat("depth", depth);
+}
+
+void addPoints(JsonDocument& doc, const char* key, const Points& p) {
+  JsonArray arr = doc[key].to<JsonArray>();
+  for (int i = 0; i < p.n; i++) {
+    JsonArray pt = arr.add<JsonArray>();
+    pt.add((p.raw[i * 3] << 8) | p.raw[i * 3 + 1]);
+    pt.add(p.raw[i * 3 + 2]);
+  }
 }
 
 // ── config topic (retained) ─────────────────────────────────────────────
@@ -123,6 +160,8 @@ void publishConfig() {
   for (int i = 0; i < curveIn.n; i++) a.add(curveIn.v[i]);
   JsonArray b = doc["out"].to<JsonArray>();
   for (int i = 0; i < curveOut.n; i++) b.add(curveOut.v[i]);
+  addPoints(doc, "pin", pointsIn);
+  addPoints(doc, "pout", pointsOut);
 
   static char buf[MQTT_BUFFER_SIZE - 128];
   size_t n = serializeJson(doc, buf, sizeof(buf));
@@ -192,8 +231,11 @@ void resumeBreath() {
 }
 
 // ── commands (MQTT) ─────────────────────────────────────────────────────
-//   CURVE  {"period":8000, "in":[0..255,...], "out":[0..255,...]}
-//          any subset of the three; 2..128 samples per curve. Saved.
+//   CURVE  {"period":8000, "in":[0..255,...], "out":[0..255,...],
+//           "pin":[[t,v],...], "pout":[[t,v],...]}
+//          any subset; 2..128 samples per curve, up to 32 points. Saved.
+//          Sending samples without their points clears the stored points
+//          (they'd no longer match).
 //   PAUSE {}   RESUME {}
 //   RATE  {"value":1.5}   DEPTH {"value":0.7}   MIN {"value":70}   (saved)
 bool readCurve(JsonVariant v, Curve& c) {
@@ -210,12 +252,37 @@ bool readCurve(JsonVariant v, Curve& c) {
   return true;
 }
 
+bool readPoints(JsonVariant v, Points& p) {
+  JsonArray arr = v.as<JsonArray>();
+  if (arr.isNull()) return false;
+  if ((int)arr.size() > MAX_POINTS) {
+    Serial.printf("CURVE: max %d points, got %d\n", MAX_POINTS, (int)arr.size());
+    return false;
+  }
+  int i = 0;
+  for (JsonVariant x : arr) {
+    int t = constrain(x[0].as<int>(), 0, 999);
+    p.raw[i * 3]     = t >> 8;
+    p.raw[i * 3 + 1] = t & 0xFF;
+    p.raw[i * 3 + 2] = constrain(x[1].as<int>(), 0, 255);
+    i++;
+  }
+  p.n = i;
+  return true;
+}
+
 void onCommand(const char* cmd, JsonObject params) {
   bool changed = false;
 
   if (strcmp(cmd, "CURVE") == 0) {
-    changed |= readCurve(params["in"], curveIn);
-    changed |= readCurve(params["out"], curveOut);
+    if (readCurve(params["in"], curveIn)) {
+      if (!readPoints(params["pin"], pointsIn)) pointsIn.n = 0;
+      changed = true;
+    }
+    if (readCurve(params["out"], curveOut)) {
+      if (!readPoints(params["pout"], pointsOut)) pointsOut.n = 0;
+      changed = true;
+    }
     if (params["period"].is<int>()) {
       periodMs = constrain(params["period"].as<int>(), 500, 120000);
       phaseMs = fmodf(phaseMs, (float)periodMs);
