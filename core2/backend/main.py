@@ -70,7 +70,11 @@ async def lifespan(app: FastAPI):
     logger.info("brain online (connecting to MQTT in background)")
 
     if firebase_pusher:
-        await firebase_pusher.start()
+        # A missing or wrong credentials file must not keep the whole app (and the webapp) down
+        try:
+            await firebase_pusher.start()
+        except Exception as e:
+            logger.error(f"Firebase sync disabled, could not start it ({FIREBASE_CRED_PATH}): {e}")
     else:
         logger.warning("FIREBASE_CRED_PATH / FIREBASE_DATABASE_URL not set — Firebase sync disabled.")
 

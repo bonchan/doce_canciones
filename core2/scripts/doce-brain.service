@@ -11,8 +11,8 @@ User=@USER@
 WorkingDirectory=@CORE@/backend
 Environment=DOCE_DATA=@DATA@
 Environment=PYTHONUNBUFFERED=1
-# "::" = every IPv6 and IPv4 address, so other computers reach it however they ask
-ExecStart=@CORE@/backend/.venv/bin/uvicorn main:app --host :: --port 8000
+# every IPv6 and IPv4 address, so other computers reach it however they ask (IPv4 only if IPv6 is off)
+ExecStart=@CORE@/backend/.venv/bin/python run.py 8000
 Restart=always
 RestartSec=3
 
