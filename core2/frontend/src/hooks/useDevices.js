@@ -1,10 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-
-// Falls back to whatever host the page was loaded from, so this works both
-// on the NUC itself and from another machine on the gallery LAN — override
-// with VITE_API_BASE in .env if the backend lives somewhere else.
-const API_BASE = import.meta.env.VITE_API_BASE || `http://${window.location.hostname}:8000`;
-const WS_BASE = API_BASE.replace(/^http/, 'ws');
+import { API_BASE, WS_BASE } from '../api';
 
 // Single source of truth for the live registry + command sending, shared by
 // every page (list view, device detail view) so they all see the same

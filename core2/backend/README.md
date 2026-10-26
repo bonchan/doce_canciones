@@ -65,51 +65,35 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 ```
 
-## Running in production on Ubuntu (systemd)
+## Running in production on the NUC (Ubuntu)
 
-Goal: if the process crashes, the machine reboots, or it gets OOM-killed,
-it comes back on its own — nobody has to walk up to the gallery machine.
+Everything is set up by one script, run once from the checkout as your normal user:
 
-1. Install into a fixed path, e.g. `/opt/doce_canciones/core2/backend`,
-   with the venv and `.env` set up as above.
+```
+git clone git@github.com:bonchan/doce_canciones.git ~/doce_canciones   # or wherever
+bash ~/doce_canciones/core2/scripts/install.sh
+```
 
-2. Create `/etc/systemd/system/doce-brain.service`:
+It installs the packages (Python, Node + pnpm, mosquitto, avahi), builds the webapp, and installs these
+systemd units (templates in `core2/scripts/`):
 
-   ```
-   [Unit]
-   Description=Doce Canciones brain (backend)
-   After=network-online.target mosquitto.service
-   Wants=network-online.target
+| unit | what |
+|------|------|
+| `doce-brain` | this backend **and** the built webapp, on port 8000, listening on IPv4 and IPv6 |
+| `doce-files` | `file_server/server.py` on port 8090 |
+| `doce-watchdog.timer` | every minute runs `scripts/watchdog.sh`: restarts whatever stopped answering |
+| `doce-update` | started by the System tab's Update button: git pull, rebuild, restart |
 
-   [Service]
-   Type=simple
-   User=doce
-   WorkingDirectory=/opt/doce_canciones/core2/backend
-   EnvironmentFile=/opt/doce_canciones/core2/backend/.env
-   ExecStart=/opt/doce_canciones/core2/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
-   Restart=always
-   RestartSec=3
-   StandardOutput=journal
-   StandardError=journal
+Open the webapp from any computer at `http://<nuc-name>.local:8000` (or its IPv4 / `[IPv6]` address).
+The System tab shows the NUC's health, the services, the watchdog, and updates.
 
-   [Install]
-   WantedBy=multi-user.target
-   ```
+Updating: the System tab's **Update** button, or by hand `git pull && bash core2/scripts/update.sh`.
+The NUC must be able to `git fetch` without typing a password (an SSH key without passphrase, or an
+https clone). Commits that only touch other folders of the repo are just pulled, nothing restarts.
 
-3. Enable and start:
-
-   ```
-   sudo systemctl daemon-reload
-   sudo systemctl enable doce-brain
-   sudo systemctl start doce-brain
-   ```
-
-4. Check on it:
-
-   ```
-   systemctl status doce-brain
-   journalctl -u doce-brain -f
-   ```
+Logs: `journalctl -u doce-brain -f` (also `doce-files`, `doce-watchdog`, `doce-update`); the watchdog's
+restarts also go to `~/doce_canciones_data/logs/watchdog.log`. To stop the watchdog from restarting
+things while you work on the NUC by hand: `touch ~/doce_canciones_data/watchdog.pause` (delete it after).
 
 ## How the restart actually works
 
@@ -122,7 +106,7 @@ Two different failure modes, handled two different ways:
 
 - **The Python process itself dies** (unhandled exception, OOM kill, someone
   closes the terminal, server reboot) — this is what `Restart=always` in the
-  systemd unit handles. Systemd notices the process exited and relaunches it
+  systemd unit handles (and `scripts/watchdog.sh` catches a process that is alive but hung). Systemd notices the process exited and relaunches it
   after `RestartSec`, indefinitely, and `WantedBy=multi-user.target` means it
   also starts automatically on boot — no manual step after a power cycle.
 

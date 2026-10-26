@@ -1,0 +1,13 @@
+# Template: scripts/update.sh fills in @USER@, @CORE@ and @DATA@.
+# Started by the Update button on the System tab (the backend may start it without a password, see
+# install.sh). It runs as root so it can refresh the service files, and does git/pip/pnpm as @USER@.
+# Being its own unit, it isn't killed when it restarts the backend.
+[Unit]
+Description=Doce Canciones update (git pull, rebuild, restart)
+
+[Service]
+Type=oneshot
+Environment=DOCE_USER=@USER@
+Environment=DOCE_DATA=@DATA@
+ExecStart=/bin/bash @CORE@/scripts/self_update.sh @DATA@/logs/update.log
+TimeoutStartSec=30min

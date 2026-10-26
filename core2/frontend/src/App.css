@@ -621,3 +621,38 @@
   transform: translateX(14px);
   background: #34d399;
 }
+
+/* ── tab bar (NavBar.jsx) ── */
+.navbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #0b1220;
+  border-bottom: 1px solid #374151;
+  padding: 0 20px;
+  font-family: sans-serif;
+  text-align: left;
+}
+.nav-brand { color: #10b981; font-weight: 600; font-size: 14px; margin-right: 16px; }
+.nav-tab {
+  position: relative;
+  color: #9ca3af;
+  text-decoration: none;
+  font-size: 14px;
+  padding: 12px 14px;
+  border-bottom: 2px solid transparent;
+}
+.nav-tab:hover { color: #f9fafb; }
+.nav-tab.active { color: #f9fafb; border-bottom-color: #10b981; }
+.nav-dot {
+  position: absolute;
+  top: 9px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fbbf24;
+}
+.nav-conn { margin-left: auto; width: 9px; height: 9px; border-radius: 50%; }
+.nav-conn.ok { background: #10b981; }
+.nav-conn.bad { background: #ef4444; }

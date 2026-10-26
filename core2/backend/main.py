@@ -2,16 +2,25 @@ import os
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 
 import broker
 from routes import router, API_KEY
 from firebase_pusher import FirebaseDatabasePusher
 from logger import logger
+import system
+import updater
 
 load_dotenv()
+
+# The built webapp (scripts/update.sh runs `pnpm build`), served by this same process so one port
+# (8000) gives other computers both the page and the API.
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 MQTT_RETRY_DELAY = int(os.getenv("MQTT_RETRY_DELAY", 3))  # seconds between MQTT connect attempts
 
@@ -65,8 +74,11 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("FIREBASE_CRED_PATH / FIREBASE_DATABASE_URL not set — Firebase sync disabled.")
 
+    update_task = loop.create_task(updater.periodic_check())
+
     yield
 
+    update_task.cancel()
     if firebase_pusher:
         await firebase_pusher.stop()
     connect_task.cancel()
@@ -82,8 +94,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(system.router)
+app.include_router(updater.router)
+
+
+@app.get("/api/health")
+def health():
+    """For scripts/watchdog.sh: answering at all means the app isn't hung."""
+    return {"ok": True, "mqtt": broker.client.is_connected()}
+
+
+# Registered last so it never shadows /api or /ws. Any other path is a file of the built webapp, or
+# index.html so that reloading /devices or /system works.
+@app.get("/{path:path}", include_in_schema=False)
+def webapp(path: str):
+    if path.startswith(("api/", "ws/")):
+        raise HTTPException(404)
+    if not FRONTEND_DIST.is_dir():
+        raise HTTPException(404, "webapp not built: run scripts/update.sh (or `pnpm build` in frontend/)")
+    file = (FRONTEND_DIST / path).resolve()
+    if path and file.is_file() and FRONTEND_DIST.resolve() in file.parents:
+        return FileResponse(file)
+    return FileResponse(FRONTEND_DIST / "index.html")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # "::" listens on IPv6 and IPv4 at once (Linux dual-stack)
+    uvicorn.run(app, host="::", port=8000)

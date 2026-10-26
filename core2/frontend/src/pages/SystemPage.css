@@ -1,0 +1,114 @@
+/* System tab. Same dark palette as the device pages (App.css). */
+.system-page .hint { color: #9ca3af; font-size: 12px; }
+.system-page .ok { color: #34d399; }
+.system-page .bad { color: #f87171; }
+.system-page .caution { color: #fbbf24; }
+.system-page code { background: #111827; color: #e5e7eb; font-size: 12px; padding: 1px 5px; }
+.system-page a { color: #93c5fd; }
+
+.sys-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.sys-section {
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 10px;
+  padding: 14px 16px;
+  min-width: 0;
+}
+.sys-section.wide { grid-column: 1 / -1; }
+.sys-section + .sys-section { margin-top: 0; }
+.system-page > .sys-section { margin-bottom: 16px; }
+.sys-section h3 { margin: 0 0 10px; font-size: 15px; color: #10b981; font-weight: 600; }
+.sys-section h4 { margin: 14px 0 6px; font-size: 14px; color: #f9fafb; }
+.sys-section p { margin: 6px 0; font-size: 13px; }
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.facts dt { color: #9ca3af; }
+.facts dd { margin: 0; color: #e5e7eb; overflow-wrap: anywhere; }
+
+.services { width: 100%; border-collapse: collapse; font-size: 13px; }
+.services td { padding: 8px 6px; border-top: 1px solid #374151; vertical-align: middle; }
+.services tr:first-child td { border-top: none; }
+.services td.right { text-align: right; }
+.dot-ok { background: #10b981; }
+.dot-bad { background: #ef4444; }
+
+.links { margin: 4px 0 12px; padding-left: 18px; font-size: 13px; }
+.links li { margin: 2px 0; overflow-wrap: anywhere; }
+
+.system-page button {
+  background: #111827;
+  color: #e5e7eb;
+  border: 1px solid #4b5563;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.system-page button:hover:not(:disabled) { border-color: #9ca3af; }
+.system-page button:disabled { opacity: 0.45; cursor: default; }
+.system-page button.primary { background: #065f46; border-color: #10b981; color: #ecfdf5; }
+.system-page button.danger { background: #4c0519; border-color: #dc2626; color: #fecaca; }
+.system-page .row { margin: 10px 0; }
+
+.console {
+  background: #0b1220;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  color: #d1d5db;
+  font: 12px/1.45 ui-monospace, Consolas, monospace;
+  padding: 8px 10px;
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin: 8px 0 0;
+}
+.log-details { margin-top: 10px; font-size: 13px; }
+.log-details summary { cursor: pointer; color: #e5e7eb; }
+
+.commits { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+.commits > li { border-left: 3px solid #10b981; padding: 6px 10px; margin: 8px 0; background: #111827; border-radius: 4px; }
+.commits > li.not-app { border-left-color: #4b5563; opacity: 0.75; }
+.commits summary { cursor: pointer; color: #9ca3af; font-size: 12px; margin-top: 4px; }
+.commit-body { white-space: pre-wrap; font: 12px/1.4 ui-monospace, Consolas, monospace; color: #9ca3af; margin: 4px 0; }
+.files { list-style: none; padding-left: 6px; margin: 4px 0; font: 12px/1.5 ui-monospace, Consolas, monospace; color: #d1d5db; }
+.fstat { display: inline-block; width: 14px; font-weight: bold; }
+.s-A { color: #34d399; } .s-M { color: #fbbf24; } .s-D { color: #f87171; } .s-R { color: #93c5fd; }
+
+.warning {
+  background: #422006;
+  border: 1px solid #b45309;
+  color: #fde68a;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+
+.danger-zone { border-color: #7f1d1d; }
+.danger-zone h3 { color: #f87171; }
+.danger-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid #374151;
+  font-size: 13px;
+}
+.danger-row:first-of-type { border-top: none; }
+
+@media (max-width: 600px) {
+  .sys-grid { grid-template-columns: 1fr; }
+  .services td:nth-child(4) { display: none; }
+}

@@ -1,8 +1,10 @@
-import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import './App.css';
 import useDevices from './hooks/useDevices';
+import useUpdateBadge from './hooks/useUpdateBadge';
+import NavBar from './components/NavBar';
 import DevicesPage from './pages/DevicesPage';
+import SystemPage from './pages/SystemPage';
 
 export default function App() {
   const {
@@ -17,9 +19,11 @@ export default function App() {
     cancelDrawing,
     uploadAudio,
   } = useDevices();
+  const updateAvailable = useUpdateBadge();
 
   return (
     <BrowserRouter>
+      <NavBar wsStatus={wsStatus} updateAvailable={updateAvailable} />
       <Routes>
         <Route path="/" element={<Navigate to="/devices" replace />} />
         <Route
@@ -39,6 +43,7 @@ export default function App() {
             />
           }
         />
+        <Route path="/system" element={<SystemPage apiKey={apiKey} setApiKey={setApiKey} />} />
       </Routes>
     </BrowserRouter>
   );

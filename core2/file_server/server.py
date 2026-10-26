@@ -31,6 +31,7 @@ Endpoints:
 import sys
 import re
 import shutil
+import socket
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -128,9 +129,23 @@ class Handler(BaseHTTPRequestHandler):
         print(f"[{self.address_string()}] {fmt % args}")
 
 
+class DualStackServer(ThreadingHTTPServer):
+    """Listens on IPv6 and IPv4 at once, so the server is reachable however a computer asks."""
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
 if __name__ == "__main__":
-    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"file_server listening on 0.0.0.0:{PORT}, serving {FILES_DIR}")
+    try:
+        httpd = DualStackServer(("::", PORT), Handler)
+        where = f"[::]:{PORT} (IPv6 + IPv4)"
+    except OSError:     # IPv6 turned off on this machine
+        httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+        where = f"0.0.0.0:{PORT}"
+    print(f"file_server listening on {where}, serving {FILES_DIR}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

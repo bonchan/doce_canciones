@@ -1,0 +1,17 @@
+# Template: scripts/update.sh fills in @USER@ and @CORE@ and copies it to /etc/systemd/system/
+[Unit]
+Description=Doce Canciones file server (audio for the devices, port 8090)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=@USER@
+WorkingDirectory=@CORE@/file_server
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 @CORE@/file_server/server.py 8090
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

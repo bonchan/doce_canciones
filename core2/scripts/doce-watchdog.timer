@@ -1,0 +1,11 @@
+[Unit]
+Description=Doce Canciones watchdog, every minute
+
+[Timer]
+# give everything time to come up after a boot
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

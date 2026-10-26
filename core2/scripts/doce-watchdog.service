@@ -1,0 +1,8 @@
+# Template: scripts/update.sh fills in @CORE@ and @DATA@. Started every minute by doce-watchdog.timer.
+[Unit]
+Description=Doce Canciones watchdog (restarts what stopped answering)
+
+[Service]
+Type=oneshot
+Environment=DOCE_DATA=@DATA@
+ExecStart=/bin/bash @CORE@/scripts/watchdog.sh

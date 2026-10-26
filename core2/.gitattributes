@@ -1,0 +1,4 @@
+# The NUC runs these with bash/systemd: keep Linux line endings whatever the editor does
+*.sh text eol=lf
+*.service text eol=lf
+*.timer text eol=lf
