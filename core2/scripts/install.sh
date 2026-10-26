@@ -55,21 +55,23 @@ else
 fi
 
 echo "== Node $NODE_MAJOR + pnpm"
-if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt "$NODE_MAJOR" ]; then
+# Checked system-wide (/usr/bin, /usr/local/bin), not in your shell: the services and the Update button
+# run without your shell's PATH, so a Node from nvm doesn't count.
+SYS_PATH=/usr/local/bin:/usr/bin:/bin
+sys_node_major() { PATH=$SYS_PATH node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
+if [ "$(sys_node_major)" -lt "$NODE_MAJOR" ]; then
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
   sudo apt-get install -y nodejs
 fi
-# corepack provides pnpm (the version pinned in frontend/package.json). Ubuntu's own nodejs package and
-# Node 25+ don't include it, so it comes from npm then.
-if ! command -v corepack >/dev/null; then
-  sudo npm install -g corepack
+# Ubuntu's own nodejs package comes without npm (NodeSource's includes it)
+if ! PATH=$SYS_PATH command -v npm >/dev/null; then
+  sudo apt-get install -y npm
 fi
-sudo "$(command -v corepack || echo /usr/local/bin/corepack)" enable
-# pnpm has to be where systemd finds it too (the Update button runs without your shell's PATH)
-if ! PATH=/usr/local/bin:/usr/bin:/bin command -v pnpm >/dev/null; then
-  sudo npm install -g pnpm@10.20.0
+# pnpm, the version pinned in frontend/package.json, where systemd finds it
+if [ "$(PATH=$SYS_PATH pnpm --version 2>/dev/null)" != "10.20.0" ]; then
+  sudo env PATH=$SYS_PATH npm install -g pnpm@10.20.0
 fi
-echo "node $(node --version), pnpm $(pnpm --version)"
+echo "node $(PATH=$SYS_PATH node --version), npm $(PATH=$SYS_PATH npm --version), pnpm $(PATH=$SYS_PATH pnpm --version)"
 
 echo "== backend settings"
 if [ ! -f "$CORE_DIR/backend/.env" ]; then
@@ -88,7 +90,7 @@ elif ss -ltn 2>/dev/null | grep -qE '[:.]8000\s'; then
 fi
 
 echo "== dependencies, webapp build, services"
-DOCE_DATA="$DATA_DIR" bash "$CORE_DIR/scripts/update.sh" --no-restart
+PATH=$SYS_PATH DOCE_DATA="$DATA_DIR" bash "$CORE_DIR/scripts/update.sh" --no-restart
 
 echo "== start"
 sudo systemctl restart doce-brain.service doce-files.service
