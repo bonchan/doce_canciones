@@ -59,7 +59,17 @@ if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split("."
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
   sudo apt-get install -y nodejs
 fi
-sudo corepack enable          # provides pnpm, the version pinned in frontend/package.json
+# corepack provides pnpm (the version pinned in frontend/package.json). Ubuntu's own nodejs package and
+# Node 25+ don't include it, so it comes from npm then.
+if ! command -v corepack >/dev/null; then
+  sudo npm install -g corepack
+fi
+sudo "$(command -v corepack || echo /usr/local/bin/corepack)" enable
+# pnpm has to be where systemd finds it too (the Update button runs without your shell's PATH)
+if ! PATH=/usr/local/bin:/usr/bin:/bin command -v pnpm >/dev/null; then
+  sudo npm install -g pnpm@10.20.0
+fi
+echo "node $(node --version), pnpm $(pnpm --version)"
 
 echo "== backend settings"
 if [ ! -f "$CORE_DIR/backend/.env" ]; then
