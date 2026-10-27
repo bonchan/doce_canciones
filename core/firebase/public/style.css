@@ -52,7 +52,6 @@ h1 {
 
 .device-card:hover {
   border-color: #4a5568;
-  transform: translateY(-2px);
 }
 
 .device-header {
