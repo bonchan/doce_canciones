@@ -178,7 +178,7 @@ function Services({ system, apiKey }) {
   }
 
   return (
-    <Section title="Services" className="wide">
+    <Section title="Services">
       {system && !list && <p className="hint">systemd isn't available here (not running on the NUC).</p>}
       {!system && <p className="hint">…</p>}
       {list && (
