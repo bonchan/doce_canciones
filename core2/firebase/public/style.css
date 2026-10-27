@@ -247,3 +247,76 @@ h1 {
 .seg-online { background: #059669; }
 .seg-offline { background: #dc2626; }
 .seg-unknown { background: #374151; }
+
+/* ── system ───────────────────────────────────────────────────────────── */
+.tab-alert {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f87171;
+  vertical-align: top;
+  margin-left: 2px;
+}
+.tab-alert[hidden] { display: none; }
+
+.sys-note { font-size: 13px; color: #94a3b8; margin: 8px 0 16px; }
+.sys-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+.sys-card {
+  background-color: #1a202c;
+  border: 1px solid #2d3748;
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 0;
+  font-size: 13px;
+}
+.sys-card.wide { grid-column: 1 / -1; }
+.sys-card h2 { margin: 0 0 10px; font-size: 15px; color: #38bdf8; }
+.sys-card p { margin: 6px 0; }
+.sys-card code { font-family: monospace; background: #121214; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+}
+.facts dt { color: #94a3b8; }
+.facts dd { margin: 0; color: #e2e8f0; overflow-wrap: anywhere; }
+
+.muted { color: #94a3b8; font-size: 12px; }
+.ok { color: #34d399; }
+.bad { color: #f87171; }
+.warn { color: #fbbf24; }
+
+.services { width: 100%; border-collapse: collapse; }
+.services td { padding: 8px 6px; border-top: 1px solid #2d3748; vertical-align: middle; }
+.services tr:first-child td { border-top: none; }
+
+.sys-card details { margin-top: 10px; }
+.sys-card summary { cursor: pointer; color: #cbd5e1; }
+.console {
+  background: #121214;
+  border: 1px solid #2d3748;
+  border-radius: 6px;
+  color: #cbd5e1;
+  font: 12px/1.45 monospace;
+  padding: 8px 10px;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.commits { list-style: none; padding: 0; margin: 8px 0 0; }
+.commits li { border-left: 3px solid #38bdf8; padding: 4px 10px; margin: 6px 0; background: #121214; border-radius: 4px; }
+.commits li.not-app { border-left-color: #4b5563; opacity: 0.75; }
+
+@media (max-width: 600px) {
+  .sys-grid { grid-template-columns: 1fr; }
+  .services td:nth-child(4) { display: none; }
+  .timeline-label { width: 140px; }
+}

@@ -70,10 +70,19 @@ class FirebaseDatabasePusher:
             # a live reference to serialize safely.
             devices_snapshot = copy.deepcopy(broker.registry.devices)
 
+            # The System tab's data (the NUC's health, services, watchdog, updates). Read in a worker
+            # thread: it runs commands and asks the file server, which take a moment.
+            try:
+                system_snapshot = await loop.run_in_executor(None, self._system_snapshot)
+            except Exception as e:
+                logger.error(f"❌ Firebase: could not read the system status: {e}")
+                system_snapshot = None
+
             payload = {
                 "last_sync": datetime.utcnow().isoformat(),
                 "interval_seconds": self.interval_seconds,
                 "devices": devices_snapshot,
+                "system": system_snapshot,
             }
 
             # ref.set() is a blocking network call (firebase_admin has no
@@ -84,6 +93,31 @@ class FirebaseDatabasePusher:
 
         except Exception as e:
             logger.error(f"❌ Firebase sync routine error: {e}")
+
+    @staticmethod
+    def _system_snapshot() -> dict:
+        """What the webapp's System tab shows, plus where updates stand (the last check, no network).
+        Imported here, not at the top: system imports routes, which the app wires up first."""
+        import system
+        import updater
+        info = system.info()
+        # the last check with GitHub; right after a restart, the local checkout until that first check
+        u = dict(updater._cache) or updater.check(fetch=False)
+        info["update"] = {
+            "checked_at": u.get("checked_at"),
+            "current": u.get("current"),
+            "branch": u.get("branch"),
+            "upstream": u.get("upstream"),
+            "behind": u.get("behind", 0),
+            "app_changes": u.get("app_changes", 0),
+            "commits": [{k: c[k] for k in ("short", "subject", "author", "time", "affects_app")}
+                        for c in u.get("commits", [])[:20]],
+            "error": u.get("error"),
+            "running": updater.running(),
+            "last_result": (updater.last_run() or {}).get("result"),
+        }
+        info["watchdog"]["log"] = info["watchdog"]["log"][-20:]
+        return info
 
     async def _loop(self):
         loop = asyncio.get_event_loop()

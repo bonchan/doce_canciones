@@ -37,6 +37,7 @@
     <nav class="tabs">
       <button class="tab-btn active" data-tab="home">Home</button>
       <button class="tab-btn" data-tab="timeline">Timeline</button>
+      <button class="tab-btn" data-tab="system">System <span class="tab-alert" id="system-alert" hidden></span></button>
     </nav>
 
     <section id="tab-home" class="tab-panel active">
@@ -44,6 +45,15 @@
       <main class="device-grid" id="devices-container">
         <div class="empty-state">Waiting for data payload from Firebase...</div>
       </main>
+    </section>
+
+    <section id="tab-system" class="tab-panel">
+      <h1>System</h1>
+      <p class="sys-note">The NUC's status as of the last sync. Read only: to restart or update, open the
+        installation's own page on the gallery network (http://nuc.local:8000/system).</p>
+      <div id="system-container">
+        <div class="empty-state">Waiting for the first sync with system status...</div>
+      </div>
     </section>
 
     <section id="tab-timeline" class="tab-panel">
@@ -125,6 +135,134 @@
         });
       });
 
+      // ── SYSTEM ────────────────────────────────────────────────────────
+      // payload.system, pushed by the backend with every sync (firebase_pusher._system_snapshot):
+      // the same data as the webapp's System tab.
+      const systemContainerEl = document.getElementById("system-container");
+      const systemAlertEl = document.getElementById("system-alert");
+
+      const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const gb = (bytes) => `${(bytes / 1e9).toFixed(1)} GB`;
+      const pct = (share) => `${Math.round(share * 100)}%`;
+      const when = (secs) => new Date(secs * 1000).toLocaleString();
+      function dur(secs) {
+        const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
+        return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+      }
+      const span = (cls, text) => `<span class="${cls}">${esc(text)}</span>`;
+      // a row is left out when the backend couldn't read that value (not on Linux)
+      const row = (label, html) => (html === null || html === undefined || html === false)
+        ? "" : `<dt>${esc(label)}</dt><dd>${html}</dd>`;
+      const card = (title, body, wide) =>
+        `<div class="sys-card${wide ? " wide" : ""}"><h2>${esc(title)}</h2>${body}</div>`;
+
+      function renderSystem(sys) {
+        if (!sys) {
+          systemContainerEl.innerHTML = `<div class="empty-state">No system status yet (the NUC's backend sends it with its next sync).</div>`;
+          systemAlertEl.hidden = true;
+          return;
+        }
+        const problems = [];
+        const now = Date.now() / 1000;
+
+        // the NUC
+        const temp = sys.temperature, cpu = sys.cpu, mem = sys.memory, disk = sys.disk;
+        if (temp >= 85) problems.push("temperature");
+        if (disk && disk.free < 2e9) problems.push("disk");
+        const nuc = `<dl class="facts">
+          ${row("Host", sys.hostname && esc(sys.hostname))}
+          ${row("Code", sys.version && `<code>${esc(sys.version.short)}</code> ${esc(sys.version.subject)}`)}
+          ${row("Up for", sys.uptime != null && `${dur(sys.uptime)} <span class="muted">· since ${esc(when(now - sys.uptime))}</span>`)}
+          ${row("Clock", sys.clock_synced != null && (sys.clock_synced ? span("ok", "synced") : span("bad", "NOT synced")))}
+          ${row("Temperature", temp != null && span(temp >= 85 ? "bad" : temp >= 75 ? "warn" : "", `${temp.toFixed(1)} °C`))}
+          ${row("CPU", cpu && `${span(cpu.usage >= 0.9 ? "warn" : "", pct(cpu.usage))} <span class="muted">· ${cpu.cores} cores</span>`)}
+          ${row("Memory", mem && esc(`${gb(mem.used)} of ${gb(mem.total)} (${pct(mem.used / mem.total)})`))}
+          ${row("Disk", disk && span(disk.free < 2e9 ? "bad" : "", `${gb(disk.used)} used, ${gb(disk.free)} free of ${gb(disk.total)}`))}
+        </dl>`;
+
+        // the installation
+        const mqtt = sys.mqtt, fs = sys.file_server, dv = sys.devices;
+        if (mqtt && !mqtt.connected) problems.push("MQTT");
+        if (fs && !fs.ok) problems.push("file server");
+        const inst = `<dl class="facts">
+          ${row("MQTT", mqtt && (mqtt.connected ? span("ok", "connected") : span("bad", "not connected")))}
+          ${row("File server", fs && (fs.ok ? span("ok", "answering") : span("bad", "not answering")))}
+          ${row("Devices", dv && `${span(dv.online < dv.total ? "warn" : "ok", `${dv.online} online`)} of ${dv.total}`)}
+        </dl>`;
+
+        // services
+        let services = `<p class="muted">systemd isn't available (not running on the NUC).</p>`;
+        if (sys.services) {
+          services = `<table class="services">${sys.services.map((s) => {
+            const ok = s.active === "active";
+            if (!ok) problems.push(s.label);
+            const state = !s.installed ? span("bad", "not installed")
+              : span(ok ? "ok" : "bad", s.active + (s.sub && s.sub !== s.active ? ` (${s.sub})` : ""));
+            return `<tr>
+              <td><i class="legend-dot ${ok ? "legend-online" : "legend-offline"}"></i></td>
+              <td><b>${esc(s.label)}</b><div class="muted"><code>${esc(s.unit)}</code></div></td>
+              <td>${state}${ok && s.since ? `<div class="muted">for ${dur(now - s.since)}</div>` : ""}</td>
+              <td>${s.restarts ? span("warn", `restarted by systemd ${s.restarts}×`) : ""}</td>
+            </tr>`;
+          }).join("")}</table>`;
+        }
+
+        // watchdog
+        const w = sys.watchdog || {};
+        const stale = w.checked_at && now - w.checked_at > 180;
+        if (stale) problems.push("watchdog");
+        const log = w.log || [];
+        const watchdog = !w.checked_at ? `<p class="warn">No check yet: is doce-watchdog.timer installed?</p>`
+          : `<dl class="facts">
+              ${row("Last check", `${span(stale ? "bad" : "", `${dur(now - w.checked_at)} ago`)}${stale ? span("bad", " · the watchdog isn't running") : ""}`)}
+              ${row("Result", esc(w.state))}
+            </dl>
+            <details><summary>Restarts it made (last ${log.length})</summary>
+              ${log.length ? `<pre class="console">${esc(log.join("\n"))}</pre>` : `<p class="muted">None yet.</p>`}
+            </details>`;
+
+        // network
+        const net = sys.network;
+        const network = !net ? `<p class="muted">Only available on Linux.</p>`
+          : `<dl class="facts">${net.map((iface) => row(iface.name, (iface.addresses || []).map((a) =>
+              `<div><code>${esc(a.address)}</code> <span class="muted">${esc(a.family)}${a.scope === "link" ? ", link-local" : ""}</span></div>`
+            ).join(""))).join("")}</dl>`;
+
+        // updates
+        const u = sys.update || {};
+        const behind = u.behind || 0;
+        let updates = `<dl class="facts">
+          ${row("Running", u.current && `<code>${esc(u.current.short)}</code> ${esc(u.current.subject)}`)}
+          ${row("Branch", u.branch && esc(u.branch + (u.upstream ? ` ← ${u.upstream}` : "")))}
+          ${row("Checked GitHub", u.checked_at ? esc(when(u.checked_at)) : "not yet")}
+          ${row("Last update", u.last_result && span(u.last_result === "ok" ? "ok" : "bad", u.last_result === "ok" ? "finished" : "failed"))}
+        </dl>`;
+        if (u.error) updates += `<p class="bad">${esc(u.error)}</p>`;
+        if (u.running) updates += `<p class="warn">An update is running.</p>`;
+        else if (u.upstream && behind === 0) updates += `<p class="ok">Up to date.</p>`;
+        if (behind > 0) {
+          updates += `<p class="${u.app_changes ? "warn" : "muted"}">${behind} new commit${behind === 1 ? "" : "s"} on ${esc(u.upstream)}${
+            u.app_changes ? " — update available" : " (none change what the NUC runs)"}</p>
+            <ul class="commits">${(u.commits || []).map((c) => `<li class="${c.affects_app ? "" : "not-app"}">
+              <b>${esc(c.subject)}</b><div class="muted"><code>${esc(c.short)}</code> · ${esc(c.author)} · ${esc(when(c.time))}</div>
+            </li>`).join("")}</ul>`;
+        }
+
+        systemContainerEl.innerHTML = `<div class="sys-grid">
+          ${card("NUC", nuc)}
+          ${card("Installation", inst)}
+          ${card("Services", services, true)}
+          ${card("Watchdog", watchdog, true)}
+          ${card("Network", network)}
+          ${card("Updates", updates)}
+        </div>`;
+
+        // a red dot on the tab when something needs a look
+        systemAlertEl.hidden = problems.length === 0;
+        systemAlertEl.title = problems.length ? `Needs a look: ${problems.join(", ")}` : "";
+      }
+
       // Track the last sync timestamp globally inside the event loop closure
       let lastSyncDate = null;
       let intervalSeconds = null;
@@ -156,6 +294,8 @@
           if (payload.interval_seconds) {
             intervalSeconds = payload.interval_seconds
           }
+
+          renderSystem(payload.system);
 
           devicesContainerEl.innerHTML = "";
 
