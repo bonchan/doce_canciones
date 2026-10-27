@@ -2,7 +2,7 @@
 // e.g. "sensor.ldr", "actuator.speaker"
 #define DEVICE_TYPE "sensor.anemometer"
 // human-readable name for this sketch
-#define SCRIPT_NAME "esp32C3_anemometer"
+#define SCRIPT_NAME "esp32C3_4lines_anemometer"
 // what this device reports in telemetry, e.g. "[\"light_level\"]"
 #define CAPS_PUBLISHES "[\"wind_speed\",\"wind_direction\",\"roll\",\"pitch\",\"heading\",\"temperature\",\"pressure\"]"
 // + any custom capabilities you add below
@@ -17,10 +17,12 @@ const char* ZONE = "outdoor";
 #include <hd44780.h>                       // library "hd44780" by Bill Perry
 #include <hd44780ioClass/hd44780_I2Cexp.h>
 
-// 16x2 LCD on a PCF8574 I2C adapter. Adapter VCC = 3.3 V, LCD pin 2 (VDD) = 5 V.
+// 16x4 LCD on a PCF8574 I2C adapter. Adapter VCC = 3.3 V, LCD pin 2 (VDD) = 5 V.
 // Not GPIO 8 (status LED) or 9 (BOOT button) — both are strapping pins.
 #define LCD_SDA 6
 #define LCD_SCL 7
+#define LCD_COLS 16
+#define LCD_ROWS 4
 #define LCD_UPDATE_MS 500UL
 hd44780_I2Cexp lcd;  // finds the adapter's I2C address by itself (0x27 / 0x3F)
 bool lcdOk = false;
@@ -97,15 +99,28 @@ bool getReading(const char* key, float& value) {
   return false;
 }
 
-// overwrite a whole row (padded to 16 chars) instead of lcd.clear(), which flickers
+// overwrite a whole row (padded to LCD_COLS chars) instead of lcd.clear(), which flickers
 void lcdLine(uint8_t row, const char* text) {
-  char line[17];
-  snprintf(line, sizeof(line), "%-16s", text);
+  char line[LCD_COLS + 1];
+  snprintf(line, sizeof(line), "%-*s", LCD_COLS, text);
   lcd.setCursor(0, row);
   lcd.print(line);
 }
 
-#define DEG ((char)223)  // ° in the LCD's character ROM
+// ° drawn as a custom char: code 223 is not ° on every LCD ROM.
+// Slot 1, not 0: a 0 byte would end the C string.
+#define DEG_SLOT 1
+#define DEG ((char)DEG_SLOT)
+const uint8_t DEG_BITMAP[8] = {
+  0b00110,
+  0b01001,
+  0b01001,
+  0b00110,
+  0b00000,
+  0b00000,
+  0b00000,
+  0b00000,
+};
 
 // ALTER (alteredActive, from device_base.h): blink the whole display on/off
 void tickAlterBlink() {
@@ -119,15 +134,19 @@ void tickAlterBlink() {
 
 // IDENTIFY (ledActive, from device_base.h): show chip id + device type
 void showIdentity() {
-  // "sensor.anemometer" is 17 chars, too long for 16: drop the "sensor." part
+  // drop the "sensor." part if the type is too long for one row
   const char* type = DEVICE_TYPE;
-  if (strlen(type) > 16 && strchr(type, '.')) type = strchr(type, '.') + 1;
-  lcdLine(0, chipIDStr);
-  lcdLine(1, type);
+  if (strlen(type) > LCD_COLS && strchr(type, '.')) type = strchr(type, '.') + 1;
+  lcdLine(0, "IDENTIFY");
+  lcdLine(1, chipIDStr);
+  lcdLine(2, type);
+  lcdLine(3, "");
 }
 
-// Viento  3.2 m/s
-// Dir 198° 22.9°C
+// ANEMOMETRO
+// Viento   3.2 m/s
+// Direccion   198°
+// Temp.     22.9°C
 void updateDisplay() {
   if (!lcdOk) return;
   tickAlterBlink();
@@ -146,21 +165,26 @@ void updateDisplay() {
   bool hasDir   = getReading("wind_direction", dir);
   bool hasTemp  = getReading("temperature", temp);
 
+  lcdLine(0, "ANEMOMETRO");
+
   if (!hasSpeed && !hasDir && !hasTemp) {
-    lcdLine(0, "ANEMOMETRO");
     lcdLine(1, wifiConnected ? "Esperando datos" : "Conectando...");
+    lcdLine(2, "");
+    lcdLine(3, "");
     return;
   }
 
-  if (hasSpeed) snprintf(buf, sizeof(buf), "Viento  %4.1f m/s", speed);
+  if (hasSpeed) snprintf(buf, sizeof(buf), "Viento %5.1f m/s", speed);
   else          snprintf(buf, sizeof(buf), "Viento    -- m/s");
-  lcdLine(0, buf);
-
-  char d[8], t[12];
-  if (hasDir)  snprintf(d, sizeof(d), "%3ld%c", lroundf(dir) % 360, DEG); else strcpy(d, " --");
-  if (hasTemp) snprintf(t, sizeof(t), "%5.1f%cC", temp, DEG);           else strcpy(t, "   --");
-  snprintf(buf, sizeof(buf), "Dir %s %s", d, t);
   lcdLine(1, buf);
+
+  if (hasDir) snprintf(buf, sizeof(buf), "Direccion   %3ld%c", lroundf(dir) % 360, DEG);
+  else        snprintf(buf, sizeof(buf), "Direccion    --");
+  lcdLine(2, buf);
+
+  if (hasTemp) snprintf(buf, sizeof(buf), "Temp.    %5.1f%cC", temp, DEG);
+  else         snprintf(buf, sizeof(buf), "Temp.       --");
+  lcdLine(3, buf);
 }
 
 // {"updates":[{"values":[{"path":"...","value":1.23}, ...]}]}
@@ -199,8 +223,9 @@ void parseSignalK(char* payload) {
 void setup() {
   // LCD first, so it shows something while wifi/MQTT connect (can take seconds)
   Wire.begin(LCD_SDA, LCD_SCL);
-  int lcdStatus = lcd.begin(16, 2);
+  int lcdStatus = lcd.begin(LCD_COLS, LCD_ROWS);
   lcdOk = (lcdStatus == 0);
+  if (lcdOk) lcd.createChar(DEG_SLOT, DEG_BITMAP);
   if (lcdOk) {
     lcdLine(0, "ANEMOMETRO");
     lcdLine(1, "Conectando...");
