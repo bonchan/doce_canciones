@@ -454,61 +454,73 @@
         return row;
       }
 
-      async function loadTimeline() {
-        timelineContainerEl.innerHTML = `<div class="empty-state">Loading timeline...</div>`;
+      // Live: the first time the tab opens, a listener on device_history starts. Firebase sends the
+      // whole history once, then only what changes, so every online/offline change redraws the
+      // timeline right away. It also redraws every 30 s, so "now" keeps moving.
+      let history = null;             // device_history as last received; null until the first answer
+      let historyError = false;
 
-        try {
-          const database = firebase.database();
-          const historyRef = database.ref("device_history");
-          const historySnap = await historyRef.once("value");
-          const history = historySnap.val() || {};
-          const deviceIds = Object.keys(history);
-
-          if (deviceIds.length === 0) {
-            timelineContainerEl.innerHTML = `<div class="empty-state">No status history recorded yet.</div>`;
-            return;
-          }
-
-          const windowEnd = Date.now();
-          const rangeMs = RANGE_MS[currentRange];
-          const windowStart = rangeMs ? windowEnd - rangeMs : 0;
-
-          timelineContainerEl.innerHTML = "";
-
-          const rangeStartLabel = document.createElement("div");
-          rangeStartLabel.className = "timeline-axis";
-          rangeStartLabel.innerHTML = `<span>${rangeMs ? new Date(windowStart).toLocaleString() : "beginning"}</span><span>now</span>`;
-          timelineContainerEl.appendChild(rangeStartLabel);
-
-          for (const deviceId of deviceIds) {
-            const eventsRef = database.ref(`device_history/${deviceId}/events`);
-
-            // Last known state at/before the window start, to seed the left
-            // edge of the track (skipped for "all" — nothing precedes it).
-            let initialOnline = null;
-            if (rangeMs) {
-              const beforeSnap = await eventsRef.orderByChild("ts").endAt(windowStart).limitToLast(1).once("value");
-              beforeSnap.forEach((child) => {
-                initialOnline = child.val().online;
-              });
-            }
-
-            // Events inside the window itself.
-            const withinSnap = await eventsRef.orderByChild("ts").startAt(windowStart).once("value");
-            const events = [];
-            withinSnap.forEach((child) => {
-              events.push(child.val());
-            });
-            events.sort((a, b) => a.ts - b.ts);
-
-            const segments = buildSegments(events, windowStart, windowEnd, initialOnline);
-            const meta = (history[deviceId] && history[deviceId].meta) || {};
-            timelineContainerEl.appendChild(renderDeviceTrack(deviceId, meta, segments, windowStart, windowEnd));
-          }
-        } catch (e) {
-          console.error("Timeline load error:", e);
-          timelineContainerEl.innerHTML = `<div class="empty-state">Failed to load timeline.</div>`;
+      function loadTimeline() {
+        if (history === null && !historyError) {
+          timelineContainerEl.innerHTML = `<div class="empty-state">Loading timeline...</div>`;
         }
+        if (!loadTimeline.listening) {
+          loadTimeline.listening = true;
+          firebase.database().ref("device_history").on("value", (snap) => {
+            history = snap.val() || {};
+            historyError = false;
+            renderTimeline();
+          }, (e) => {
+            console.error("Timeline load error:", e);
+            historyError = true;
+            timelineContainerEl.innerHTML = `<div class="empty-state">Failed to load timeline.</div>`;
+          });
+          setInterval(renderTimeline, 30_000);
+        }
+        renderTimeline();
+      }
+
+      function timelineVisible() {
+        return document.getElementById("tab-timeline").classList.contains("active");
+      }
+
+      function renderTimeline() {
+        if (history === null || !timelineVisible()) return;
+        const deviceIds = Object.keys(history).sort((a, b) => {
+          const typeA = ((history[a].meta || {}).type || "").toLowerCase();
+          const typeB = ((history[b].meta || {}).type || "").toLowerCase();
+          return typeA !== typeB ? (typeA < typeB ? -1 : 1) : a < b ? -1 : 1;
+        });
+        if (deviceIds.length === 0) {
+          timelineContainerEl.innerHTML = `<div class="empty-state">No status history recorded yet.</div>`;
+          return;
+        }
+
+        const windowEnd = Date.now();
+        const rangeMs = RANGE_MS[currentRange];
+        const windowStart = rangeMs ? windowEnd - rangeMs : 0;
+
+        // built off-page, then swapped in at once, so a redraw doesn't flicker
+        const fragment = document.createDocumentFragment();
+        const rangeStartLabel = document.createElement("div");
+        rangeStartLabel.className = "timeline-axis";
+        rangeStartLabel.innerHTML = `<span>${rangeMs ? new Date(windowStart).toLocaleString() : "beginning"}</span><span>now</span>`;
+        fragment.appendChild(rangeStartLabel);
+
+        for (const deviceId of deviceIds) {
+          const all = Object.values(history[deviceId].events || {})
+            .filter((ev) => typeof ev.ts === "number")
+            .sort((a, b) => a.ts - b.ts);
+          // the last state before the window opens seeds the left edge (nothing precedes "all")
+          const before = rangeMs ? all.filter((ev) => ev.ts <= windowStart) : [];
+          const initialOnline = before.length ? before[before.length - 1].online : null;
+          const events = all.filter((ev) => ev.ts > windowStart);
+
+          const segments = buildSegments(events, windowStart, windowEnd, initialOnline);
+          const meta = history[deviceId].meta || {};
+          fragment.appendChild(renderDeviceTrack(deviceId, meta, segments, windowStart, windowEnd));
+        }
+        timelineContainerEl.replaceChildren(fragment);
       }
     });
   </script>
