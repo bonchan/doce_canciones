@@ -38,6 +38,7 @@ if FIREBASE_CRED_PATH and FIREBASE_DATABASE_URL:
     # Only fires on an actual online/offline flip (see broker.Registry._set_online) —
     # record_status_change itself no-ops until firebase_pusher.start() has run.
     broker.registry.on_transition = firebase_pusher.record_status_change
+    broker.registry.on_deleted = firebase_pusher.record_deleted
 
 
 async def _connect_with_retry(loop: asyncio.AbstractEventLoop):

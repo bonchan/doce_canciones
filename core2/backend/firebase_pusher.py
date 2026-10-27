@@ -148,6 +148,37 @@ class FirebaseDatabasePusher:
         # with a fresh read of the registry).
         asyncio.ensure_future(self.push_snapshot())
 
+    # ── deleted devices ──────────────────────────────────────────────────
+    # Wired up in main.py to broker.registry.on_deleted. The deleted devices'
+    # timelines go; with clear_all_history the whole timeline restarts, each
+    # remaining device starting from its current state. The snapshot is pushed
+    # right away so the Home tab drops them too.
+    def record_deleted(self, device_ids: list, clear_all_history: bool):
+        if not self.is_running:
+            return
+        remaining = [dict(d) for d in broker.registry.devices.values()] if clear_all_history else []
+        asyncio.ensure_future(self._delete_history(device_ids, clear_all_history, remaining))
+
+    async def _delete_history(self, device_ids: list, clear_all_history: bool, remaining: list):
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, self._delete_history_sync, device_ids, clear_all_history, remaining)
+        except Exception as e:
+            logger.error(f"❌ Firebase: deleting history failed: {e}")
+        await self.push_snapshot()
+
+    def _delete_history_sync(self, device_ids: list, clear_all_history: bool, remaining: list):
+        if clear_all_history:
+            db.reference("device_history").delete()
+            for device in remaining:
+                self._push_history_sync(device)
+            logger.warning(f"Firebase: timeline history cleared, restarted for {len(remaining)} device(s)")
+        else:
+            for device_id in device_ids:
+                db.reference(f"device_history/{device_id}").delete()
+        if device_ids:
+            logger.warning(f"Firebase: deleted {len(device_ids)} device(s): {', '.join(device_ids)}")
+
     async def _push_history(self, device: dict):
         loop = asyncio.get_event_loop()
         try:

@@ -43,6 +43,9 @@ class Registry:
         # history pusher, kept out of broker.py itself so this module has no
         # idea Firebase exists.
         self.on_transition: Optional[Callable[[dict], None]] = None
+        # Same idea, fired after devices are deleted (forget_devices below):
+        # (deleted ids, whether to also wipe every device's history).
+        self.on_deleted: Optional[Callable[[list, bool], None]] = None
 
     def _get(self, device_id: str, zone: str) -> dict:
         dev = self.devices.get(device_id)
@@ -243,6 +246,10 @@ def _on_message(c, userdata, msg):
     zone, device_id, kind = parsed
     if _loop is None:
         return
+    # An empty message is how a retained one gets deleted (see forget_devices):
+    # nothing to record, and it must not bring the deleted device back.
+    if not msg.payload:
+        return
     _loop.call_soon_threadsafe(_handle, zone, device_id, kind, msg.payload, msg.retain)
 
 
@@ -261,6 +268,45 @@ def publish_command(device_id: str, capability: str, params: Optional[dict] = No
 def publish_broadcast_command(device_type: str, capability: str, params: Optional[dict] = None):
     topic = broadcast_topic(device_type, capability)
     client.publish(topic, json.dumps(params or {}), qos=1)
+
+
+# ── deleting devices ──────────────────────────────────────────────────────
+# For a fresh start of the installation: old boards, the simulator, anything
+# that isn't there any more. Besides dropping it from the registry, its
+# retained status/announce/config messages are deleted on the broker (an empty
+# retained message replaces them) — otherwise the broker would replay them and
+# the device would reappear on the next backend restart. A deleted device that
+# is switched on again simply announces itself and shows up as new.
+#
+# Deleting an ONLINE device doesn't stick: it keeps publishing telemetry, so
+# it comes straight back, and without its type until it reconnects (devices
+# only announce on connect). That's why the callers delete offline ones only,
+# unless asked otherwise.
+RETAINED_KINDS = ("status", "announce", "config")
+
+
+def forget_devices(device_ids: list[str], clear_all_history: bool = False) -> list[str]:
+    """Deletes these devices; returns the ids that existed. Call on the event loop."""
+    if not client.is_connected():
+        raise RuntimeError("MQTT is not connected: the broker would keep the devices' retained "
+                           "messages and they would come back. Try again once it is connected.")
+    deleted = []
+    for device_id in device_ids:
+        dev = registry.devices.pop(device_id, None)
+        if dev is None:
+            continue
+        for kind in RETAINED_KINDS:
+            client.publish(f"installation/{dev['zone']}/{device_id}/{kind}", b"", qos=1, retain=True)
+        pending_audio.pop(device_id, None)
+        deleted.append(device_id)
+        logger.warning(f"[delete] {device_id} ({dev.get('type')}, zone {dev.get('zone')}) deleted")
+    if registry.on_deleted and (deleted or clear_all_history):
+        try:
+            registry.on_deleted(deleted, clear_all_history)
+        except Exception as e:
+            logger.error(f"on_deleted callback failed: {e}")
+    asyncio.ensure_future(registry.broadcast())
+    return deleted
 
 
 # ── periodic tick ─────────────────────────────────────────────────────────

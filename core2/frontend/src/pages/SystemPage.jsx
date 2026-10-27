@@ -72,7 +72,7 @@ export default function SystemPage({ apiKey, setApiKey }) {
         <Watchdog system={system} />
       </div>
       <Updates apiKey={apiKey} />
-      <DangerZone apiKey={apiKey} />
+      <DangerZone apiKey={apiKey} system={system} />
     </div>
   );
 }
@@ -453,10 +453,33 @@ const POWER = [
     done: 'Powering off.' },
 ];
 
-function DangerZone({ apiKey }) {
+function DangerZone({ apiKey, system }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState('');
   const [error, setError] = useState('');
+  const [clearHistory, setClearHistory] = useState(false);
+  const [cleared, setCleared] = useState('');
+
+  const dv = system?.devices;
+  const offline = dv ? dv.total - dv.online : 0;
+
+  // For the start of the installation: removes every device that isn't on right now (old boards, the
+  // simulator) from the list, the MQTT broker and Firebase. See broker.forget_devices.
+  async function clearDevices() {
+    const what = `Delete the ${offline} offline device${offline === 1 ? '' : 's'}`
+      + (clearHistory ? ' and restart the whole timeline history' : '') + '?';
+    if (!window.confirm(`${what}\n\nDevices that are switched on later show up again by themselves.`)) return;
+    setBusy(true); setError(''); setCleared('');
+    try {
+      const r = await request('POST', `/api/devices/clear?clear_history=${clearHistory}`, { apiKey });
+      setCleared(`Deleted ${r.deleted.length} device${r.deleted.length === 1 ? '' : 's'}`
+        + (clearHistory ? ', timeline history restarted' : '') + `. ${r.remaining} left.`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function run(p) {
     if (!window.confirm(p.confirm)) return;
@@ -473,6 +496,24 @@ function DangerZone({ apiKey }) {
 
   return (
     <Section title="Danger zone" className="danger-zone">
+      <div className="danger-row">
+        <div>
+          <b>Clear devices</b>
+          <p className="hint">
+            For the start of the installation: deletes every device that is offline now
+            {dv ? ` (${offline} of ${dv.total})` : ''} from this list and from Firebase. Devices that are on
+            stay; any deleted one that is switched on again shows up by itself.
+          </p>
+          <label className="hint check">
+            <input type="checkbox" checked={clearHistory} onChange={(e) => setClearHistory(e.target.checked)} />
+            Also restart the timeline history of the devices that stay (Firebase Timeline tab)
+          </label>
+        </div>
+        <button className="danger" disabled={busy || !apiKey || (!offline && !clearHistory)} onClick={clearDevices}>
+          Clear
+        </button>
+      </div>
+      {cleared && <p className="ok">{cleared}</p>}
       {POWER.map((p) => (
         <div key={p.action} className="danger-row">
           <div>

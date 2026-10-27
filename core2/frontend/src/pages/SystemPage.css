@@ -112,3 +112,4 @@
   .sys-grid { grid-template-columns: 1fr; }
   .services td:nth-child(4) { display: none; }
 }
+.system-page label.check { display: flex; align-items: center; gap: 6px; margin-top: 6px; cursor: pointer; }

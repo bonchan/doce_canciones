@@ -656,3 +656,16 @@
 .nav-conn { margin-left: auto; width: 9px; height: 9px; border-radius: 50%; }
 .nav-conn.ok { background: #10b981; }
 .nav-conn.bad { background: #ef4444; }
+
+/* Delete button on offline device cards (DeviceIndicator.jsx) */
+.delete-device {
+  margin-top: 10px;
+  background: #4c0519;
+  border: 1px solid #dc2626;
+  color: #fecaca;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.delete-device:hover { background: #7f1d1d; }

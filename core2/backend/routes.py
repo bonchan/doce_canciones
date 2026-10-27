@@ -60,6 +60,44 @@ def command_type(device_type: str, capability: str, params: dict = {}):
     return {"status": "ok"}
 
 
+# ── deleting devices (see broker.forget_devices) ─────────────────────────
+# async on purpose: the registry is only changed on the event loop.
+def _stop_drawing(device_id: str):
+    # only when a drawing is running: cancel_job also sends the device a HALT
+    task = drawing._active_jobs.get(device_id)
+    if task and not task.done():
+        drawing.cancel_job(device_id)
+
+
+@router.delete("/api/devices/{device_id}", dependencies=[Depends(require_api_key)])
+async def delete_device(device_id: str, allow_online: bool = False):
+    dev = registry.devices.get(device_id)
+    if not dev:
+        raise HTTPException(404, f"unknown device {device_id}")
+    if dev["online"] and not allow_online:
+        raise HTTPException(409, f"{device_id} is online: it would come straight back. Switch it off first.")
+    _stop_drawing(device_id)
+    try:
+        deleted = broker.forget_devices([device_id])
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"deleted": deleted}
+
+
+@router.post("/api/devices/clear", dependencies=[Depends(require_api_key)])
+async def clear_devices(include_online: bool = False, clear_history: bool = False):
+    """Deletes every offline device (every device with include_online). clear_history also
+    restarts the Firebase timeline of the remaining devices from now."""
+    ids = [d["device_id"] for d in registry.devices.values() if include_online or not d["online"]]
+    for device_id in ids:
+        _stop_drawing(device_id)
+    try:
+        deleted = broker.forget_devices(ids, clear_all_history=clear_history)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"deleted": deleted, "remaining": len(registry.devices)}
+
+
 @router.post("/api/devices/{device_id}/audio", dependencies=[Depends(require_api_key)])
 def upload_audio(device_id: str, file: UploadFile = File(...)):
     # Checked up front rather than relying on publish_command's own KeyError

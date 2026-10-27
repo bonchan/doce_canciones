@@ -7,7 +7,7 @@ import CommandPanel from './CommandPanel';
 // otherwise), and every capability it declared in `subscribes` as a
 // clickable button via CommandPanel. Kept the filename to avoid renaming a
 // file the user already has open.
-export default function DeviceCard({ node, onCommand }) {
+export default function DeviceCard({ node, onCommand, onDelete }) {
   const isOnline = node.online === true;
   const caps = node.capabilities || { publishes: [], subscribes: [] };
   const telemetryEntries = Object.entries(node.telemetry || {});
@@ -44,6 +44,19 @@ export default function DeviceCard({ node, onCommand }) {
       <Link className="open-link" to={`/devices?id=${node.device_id}`}>Open device page &rarr;</Link>
 
       <CommandPanel deviceId={node.device_id} capabilities={caps.subscribes} onCommand={onCommand} />
+
+      {/* only offline ones: an online device keeps publishing and would come straight back */}
+      {!isOnline && onDelete && (
+        <button
+          className="delete-device"
+          title="Remove it from the list and from Firebase. If it is switched on again it shows up as new."
+          onClick={() => {
+            if (window.confirm(`Delete ${node.type || 'device'} ${node.device_id}?`)) onDelete(node.device_id).catch(() => {});
+          }}
+        >
+          Delete
+        </button>
+      )}
     </div>
   );
 }

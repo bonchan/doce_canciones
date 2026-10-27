@@ -18,6 +18,7 @@ export default function App() {
     drawText,
     cancelDrawing,
     uploadAudio,
+    deleteDevice,
   } = useDevices();
   const updateAvailable = useUpdateBadge();
 
@@ -40,6 +41,7 @@ export default function App() {
               drawText={drawText}
               cancelDrawing={cancelDrawing}
               uploadAudio={uploadAudio}
+              deleteDevice={deleteDevice}
             />
           }
         />

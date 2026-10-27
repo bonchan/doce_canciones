@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE, WS_BASE } from '../api';
+import { API_BASE, WS_BASE, request } from '../api';
 
 // Single source of truth for the live registry + command sending, shared by
 // every page (list view, device detail view) so they all see the same
@@ -162,6 +162,20 @@ export default function useDevices() {
     [apiKey]
   );
 
+  // Removes an offline device from the registry, the broker's retained
+  // messages and Firebase (see broker.forget_devices). The websocket brings
+  // the updated list.
+  const deleteDevice = useCallback(
+    (deviceId) => {
+      setError('');
+      return request('DELETE', `/api/devices/${deviceId}`, { apiKey }).catch((err) => {
+        setError(`Delete ${deviceId} failed: ${err.message}`);
+        throw err;
+      });
+    },
+    [apiKey]
+  );
+
   return {
     devices,
     wsStatus,
@@ -173,5 +187,6 @@ export default function useDevices() {
     drawText,
     cancelDrawing,
     uploadAudio,
+    deleteDevice,
   };
 }
