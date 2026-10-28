@@ -5,6 +5,7 @@ import VoicePage from './devices/VoicePage';
 import WindWorldPage from './devices/WindWorldPage';
 import ServosPage from './devices/ServosPage';
 import BreathePage from './devices/BreathePage';
+import PlantLightPage from './devices/PlantLightPage';
 import NotImplementedPage from './NotImplementedPage';
 
 // Per-type page registry — add an entry here when a device type gets its
@@ -14,6 +15,7 @@ const DEVICE_PAGES = {
   voice: VoicePage,
   servos: ServosPage,
   breathe: BreathePage,
+  plant_light: PlantLightPage,
   display: DisplayPage,
   // If the Godot piece is ever given a type of its own, this is the key it
   // would use, and DisplayPage below stops being needed.
