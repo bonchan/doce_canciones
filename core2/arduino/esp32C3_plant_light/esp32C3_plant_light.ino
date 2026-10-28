@@ -25,8 +25,8 @@ const int MOTOR_IN2 = 6;   // PWM here = toward LEFT
 // so the motor refuses to drive into it (fail safe).
 //   GPIO9  avoided: BOOT strapping pin, LOW at power-up = flash mode.
 //   GPIO21 avoided: UART TX, the chip prints its boot log on it.
-const int ENDSTOP_LEFT  = 10;
-const int ENDSTOP_RIGHT = 20;
+const int ENDSTOP_LEFT  = 20;
+const int ENDSTOP_RIGHT = 10;
 
 // Lights (second L298N channel) — not implemented yet.
 // GPIO8 is the status LED (LED_PIN in device_base.h) and a strapping pin,
