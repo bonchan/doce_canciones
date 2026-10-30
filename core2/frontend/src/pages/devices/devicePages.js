@@ -5,6 +5,7 @@ import WindWorldPage from './WindWorldPage';
 import ServosPage from './ServosPage';
 import BreathePage from './BreathePage';
 import PlantLightPage from './PlantLightPage';
+import TimeIntervalPage from './TimeIntervalPage';
 import NotImplementedPage from '../NotImplementedPage';
 
 // Per-type page registry — add an entry here when a device type gets its
@@ -16,6 +17,7 @@ const DEVICE_PAGES = {
   servos: ServosPage,
   breathe: BreathePage,
   plant_light: PlantLightPage,
+  time_interval: TimeIntervalPage,
   // If the Godot piece is ever given a type of its own, this is the key it
   // would use, and the "display" special case below stops being needed.
   'display.wind_world': WindWorldPage,
