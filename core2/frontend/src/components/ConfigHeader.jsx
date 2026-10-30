@@ -1,7 +1,7 @@
 import React from 'react';
 import EditableName from './EditableName';
 
-// Sits directly above ConfigSliders in both VoiceCard and VoicePage: the
+// Sits directly above ConfigSliders in VoicePage: the
 // device's editable name on the left, the "hide unset" toggle that filters
 // ConfigSliders on the right — kept together since the toggle is really
 // about the sliders right below it, not the name itself.

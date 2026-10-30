@@ -494,6 +494,35 @@
 }
 
 /* type filter banner (/devices?type=...) */
+/* type-filtered list: every device shown as its full particular page */
+.device-page-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 480px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.embedded-device-page {
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 10px;
+  padding: 14px;
+  min-width: 0;
+}
+
+/* the page itself brings its own full-screen wrapper + back link — tone
+   both down when it sits inside the list */
+.embedded-device-page > .app {
+  min-height: 0;
+  padding: 0;
+  max-width: none;
+  background: transparent;
+}
+
+.embedded-device-page .back-link {
+  display: none;
+}
+
 .type-filter-banner {
   font-size: 12px;
   color: #9ca3af;

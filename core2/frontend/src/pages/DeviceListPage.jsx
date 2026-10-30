@@ -1,23 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import DeviceCard from '../components/DeviceIndicator';
-import VoiceCard from '../components/devices/VoiceCard';
-
-// Per-type "particular" card registry — only used once the grid is
-// filtered down to one type (see CardComponent below). Mixed/"all types"
-// view always uses the plain DeviceCard, since a specialized card (e.g.
-// full config sliders) only makes sense once every card in the grid is the
-// same type. Anything not listed here still falls back to DeviceCard.
-const TYPE_CARDS = {
-  voice: VoiceCard,
-};
+import DevicePage from './devices/devicePages';
 
 // The original App.jsx grid, mounted (via DevicesPage) at /devices and
 // /devices?type=<type>. typeFilter comes from the URL — when set, this is
-// "every device of that type", zone-filterable on top via the chips below.
-export default function DeviceListPage({ devices, wsStatus, apiKey, setApiKey, error, sendCommand, uploadAudio, deleteDevice, typeFilter }) {
+// "every device of that type", zone-filterable on top via the chips below,
+// and each device is shown as its full particular page (the same one
+// /devices?id=... shows) instead of a compact card.
+export default function DeviceListPage({ devices, wsStatus, apiKey, setApiKey, error, sendCommand, drawSolarPath, drawText, cancelDrawing, uploadAudio, deleteDevice, typeFilter }) {
   const [zoneFilter, setZoneFilter] = useState('all');
-  const CardComponent = (typeFilter && TYPE_CARDS[typeFilter]) || DeviceCard;
 
   const typeFilteredDevices = useMemo(
     () => Object.values(devices).filter((d) => !typeFilter || d.type === typeFilter),
@@ -100,11 +92,23 @@ export default function DeviceListPage({ devices, wsStatus, apiKey, setApiKey, e
         ))}
       </div>
 
-      <div className="grid">
-        {sortedDevices.map((node) => (
-          <CardComponent key={node.device_id} node={node} onCommand={sendCommand} uploadAudio={uploadAudio}
-            onDelete={apiKey ? deleteDevice : null} />
-        ))}
+      <div className={typeFilter ? 'device-page-grid' : 'grid'}>
+        {sortedDevices.map((node) => {
+          if (!typeFilter) {
+            return (
+              <DeviceCard key={node.device_id} node={node} onCommand={sendCommand}
+                onDelete={apiKey ? deleteDevice : null} />
+            );
+          }
+          return (
+            <div key={node.device_id} className="embedded-device-page">
+              <Link className="open-link" to={`/devices?id=${node.device_id}`}>Open on its own &rarr;</Link>
+              {/* error is shown once above, not repeated inside every page */}
+              <DevicePage node={node} sendCommand={sendCommand} drawSolarPath={drawSolarPath} drawText={drawText}
+                cancelDrawing={cancelDrawing} uploadAudio={uploadAudio} error={null} />
+            </div>
+          );
+        })}
         {sortedDevices.length === 0 && (
           <div className="empty">
             {typeFilter && zoneFilter !== 'all'

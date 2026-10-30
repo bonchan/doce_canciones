@@ -30,7 +30,7 @@ export const CONFIG_FIELDS = [
 // the user actually drags it.
 const DEFAULT_DRAFT_VALUE = 0.5;
 
-// Shared by VoicePage (full device page) and VoiceCard (compact grid card)
+// Used by VoicePage (shown both on its own and in the type-filtered list)
 // so the drag/commit/clear logic lives in exactly one place. Dragging only
 // updates the value locally; releasing (mouseup/touchend — or keyup, for
 // keyboard nudges) is what actually fires the SET command, so a live drag

@@ -136,7 +136,7 @@ export default function useDevices() {
   // the device an AUDIO_UPDATE command itself; this call is just "get the
   // bytes there." No Content-Type header — the browser sets the multipart
   // boundary for us. Returns the fetch promise (unlike the other command
-  // helpers here) so a caller like VoiceCard can clear its own "uploading"
+  // helpers here) so a caller like AudioUpload can clear its own "uploading"
   // state once it settles, on top of the shared error banner below.
   const uploadAudio = useCallback(
     (deviceId, file) => {
