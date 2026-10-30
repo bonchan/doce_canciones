@@ -1,10 +1,10 @@
 // ── device identity ───────────────────────────────────────────────────────────
 #define DEVICE_TYPE "voice"
-#define SCRIPT_NAME "esp32C3_module"
+#define SCRIPT_NAME "esp32C3_voices"
 #define CAPS_PUBLISHES "[\"audio_playing\",\"organism_active\",\"voice_name\"]"
 #define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\",\"SET\",\"AUDIO_UPDATE\",\"AUDIO_PLAY\"]"
 
-const char* ZONE = "bichos";
+const char* ZONE = "fitofonias";
 
 #include "../device_base.h"
 
