@@ -43,7 +43,20 @@ static float behaviorGain = 0.0f;
 static float behaviorRate = 1.0f;
 static bool audioFinishedEvent = false;
 
+// true mientras suena un AUDIO_PLAY directo: el WAV completo, una vez,
+// sin comportamiento encima. El comportamiento se pausa hasta que termina.
+static bool audioDirectPlaying = false;
+
+// Aplica la altura actual al reloj I2S. Se llama también después de cada
+// begin() del WAV, porque arrancar un archivo puede resetear el rate al del
+// archivo (44.1 kHz) y perder el cambio de altura pedido antes de empezar.
+static void aplicarRateI2S() {
+    if (i2sOut) i2sOut->SetRate((int)(AUDIO_BASE_SAMPLE_RATE * behaviorRate));
+}
+
 static void audioDestroyPlayback() {
+    audioDirectPlaying = false;
+
     if (wavGen) {
         if (wavGen->isRunning()) wavGen->stop();
         delete wavGen;
@@ -183,7 +196,7 @@ void handleAudioUpdate(JsonObject params) {
 void audioBehaviorSetGain(float gain) {
     behaviorGain = gain < 0.0f ? 0.0f : (gain > 1.0f ? 1.0f : gain);
 
-    if (strcmp(name, "VOZSEMILLA") != 0) {
+    if (audioDirectPlaying || strcmp(name, "VOZSEMILLA") != 0) {
         if (mixA) mixA->SetGain(behaviorGain);
     } else if (!vozSemillaCrossfade) {
         if (vozSemillaAEsPrincipal) {
@@ -217,11 +230,9 @@ void audioBehaviorSetRateMultiplier(float multiplier) {
 
     behaviorRate = nuevoRate;
 
-    if (i2sOut && audioBehaviorIsPlaying()) {
-        i2sOut->SetRate(
-            (int)(AUDIO_BASE_SAMPLE_RATE * behaviorRate)
-        );
-    }
+    // Se aplica siempre (también antes de arrancar el WAV) y se vuelve a
+    // aplicar después de cada begin() — ver aplicarRateI2S().
+    aplicarRateI2S();
 }
 
 bool audioBehaviorStartFromBeginning() {
@@ -251,6 +262,8 @@ bool audioBehaviorStartFromBeginning() {
         return false;
     }
 
+    aplicarRateI2S();
+
     vozSemillaAEsPrincipal = true;
     vozSemillaCrossfade = false;
     return true;
@@ -269,14 +282,19 @@ bool audioBehaviorConsumeFinishedEvent() {
     return e;
 }
 
-// AUDIO_PLAY conserva el nombre del comando MQTT, pero en esta versión el .ino
-// lo usa para ACTIVAR el organismo. Esta función queda disponible para pruebas
-// de reproducción directa si fuera necesaria.
+// AUDIO_PLAY: reproduce el WAV completo una vez, tal cual — altura normal, a
+// `volume` (o AUDIO_PLAY_DEFAULT_GAIN si no está seteado, para no saturar).
+// No respeta MUTE ni el comportamiento: el comportamiento queda en pausa
+// mientras suena y retoma solo cuando termina. Un segundo AUDIO_PLAY
+// reinicia desde el principio.
+#define AUDIO_PLAY_DEFAULT_GAIN 0.4f
+
 void handleAudioPlay() {
-    float gain = isnan(volume) ? 1.0f : volume;
+    float gain = isnan(volume) ? AUDIO_PLAY_DEFAULT_GAIN : volume;
     audioBehaviorSetGain(gain);
     audioBehaviorSetRateMultiplier(1.0f);
-    audioBehaviorStartFromBeginning();
+    if (!audioBehaviorStartFromBeginning()) return;
+    audioDirectPlaying = true;
     Serial.printf("AUDIO_PLAY directo: %s at gain %.3f\n", AUDIO_PATH, gain);
 }
 
@@ -285,7 +303,7 @@ void tickAudio() {
     // --------------------------------------------------------
     // VOZSEMILLA: loop A/B con crossfade real
     // --------------------------------------------------------
-    if (strcmp(name, "VOZSEMILLA") == 0) {
+    if (!audioDirectPlaying && strcmp(name, "VOZSEMILLA") == 0) {
 
         AudioFileSourceLittleFS *principalSource =
             vozSemillaAEsPrincipal ? wavSource : wavSourceB;
@@ -334,6 +352,7 @@ void tickAudio() {
 
                         if (wavGenB->begin(wavSourceB, mixB)) {
                             vozSemillaCrossfade = true;
+                            aplicarRateI2S();
                         }
                     }
                 } else {
@@ -346,6 +365,7 @@ void tickAudio() {
 
                         if (wavGen->begin(wavSource, mixA)) {
                             vozSemillaCrossfade = true;
+                            aplicarRateI2S();
                         }
                     }
                 }
@@ -419,7 +439,12 @@ void tickAudio() {
             }
 
             audioFinishedEvent = true;
-            Serial.println("AUDIO: finished");
+            if (audioDirectPlaying) {
+                audioDirectPlaying = false;
+                Serial.println("AUDIO_PLAY directo: finished — vuelve el comportamiento");
+            } else {
+                Serial.println("AUDIO: finished");
+            }
         }
     }
 

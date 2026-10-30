@@ -13,6 +13,8 @@ export default function VoicePage({ node, sendCommand, error }) {
   const config = node.config || {};
   const telemetryEntries = Object.entries(node.telemetry || {});
   const [hideUnset, setHideUnset] = useState(true);
+  // Reported by the device in telemetry. Devices always boot unmuted.
+  const muted = node.telemetry?.muted === true;
 
   return (
     <div className="app device-page">
@@ -44,6 +46,18 @@ export default function VoicePage({ node, sendCommand, error }) {
         ))}
       </div>
 
+      {/* Mute silences the organism's behaviour (it keeps running underneath);
+          AUDIO_PLAY in the command panel below still plays the raw file. */}
+      <div className="jog-controls">
+        <button
+          className={`jog-btn${muted ? ' active' : ''}`}
+          disabled={!node.online}
+          onClick={() => sendCommand(node.device_id, 'MUTE', { muted: !muted })}
+        >
+          {muted ? 'Muted — click to unmute' : 'Mute'}
+        </button>
+      </div>
+
       <ConfigHeader
         deviceId={node.device_id}
         name={config.name}
@@ -56,7 +70,7 @@ export default function VoicePage({ node, sendCommand, error }) {
 
       <CommandPanel
         deviceId={node.device_id}
-        capabilities={(caps.subscribes || []).filter((c) => c !== 'SET')}
+        capabilities={(caps.subscribes || []).filter((c) => c !== 'SET' && c !== 'MUTE')}
         onCommand={sendCommand}
       />
     </div>

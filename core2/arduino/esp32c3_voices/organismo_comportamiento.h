@@ -616,11 +616,34 @@ static void identificarVoz() {
 // AUDIO
 // ============================================================
 
+// MUTE: el comportamiento sigue corriendo (tiempos, apariciones, sensor),
+// solo se silencia la salida. Arranca siempre sin mute — no se guarda en
+// flash. No afecta a un AUDIO_PLAY directo.
+static bool organismoMuted = false;
+
+// Último volumen que pidió el comportamiento, para recuperarlo al quitar el
+// mute (algunas voces, como CANTA, no reaplican volumen en cada loop).
+static float volumenPedido = 0.0f;
+
 static inline void aplicarVolumen(float v) {
 
+    volumenPedido = vozClamp(v, 0.0f, 1.0f);
+
     audioBehaviorSetGain(
-        vozClamp(v, 0.0f, 1.0f)
+        organismoMuted ? 0.0f : volumenPedido
     );
+}
+
+
+static void setMuted(bool m) {
+
+    organismoMuted = m;
+
+    if (!audioDirectPlaying) {
+        audioBehaviorSetGain(m ? 0.0f : volumenPedido);
+    }
+
+    Serial.println(m ? "ORGANISMO: mute" : "ORGANISMO: sin mute");
 }
 
 
@@ -2062,6 +2085,13 @@ static void actualizarVoz() {
         !estado.organismoActivo ||
         vozActual == VOZ_DESCONOCIDA
     ) {
+
+        return;
+    }
+
+
+    // AUDIO_PLAY directo en curso: el comportamiento espera a que termine.
+    if (audioDirectPlaying) {
 
         return;
     }

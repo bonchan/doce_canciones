@@ -1,8 +1,8 @@
 // ── device identity ───────────────────────────────────────────────────────────
 #define DEVICE_TYPE "voice"
 #define SCRIPT_NAME "esp32C3_voices"
-#define CAPS_PUBLISHES "[\"audio_playing\",\"organism_active\",\"voice_name\"]"
-#define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\",\"SET\",\"AUDIO_UPDATE\",\"AUDIO_PLAY\"]"
+#define CAPS_PUBLISHES "[\"audio_playing\",\"muted\"]"
+#define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\",\"SET\",\"AUDIO_UPDATE\",\"AUDIO_PLAY\",\"MUTE\"]"
 
 const char* ZONE = "fitofonias";
 
@@ -58,16 +58,23 @@ void onCommand(const char* cmd, JsonObject params) {
         handleAudioUpdate(params);
     }
 
+    // Reproduce el WAV una vez, tal cual (ver handleAudioPlay en
+    // organismo_audio.h). El organismo sigue activo y retoma al terminar.
     else if (strcmp(cmd, "AUDIO_PLAY") == 0) {
 
-        if (!estado.organismoActivo) {
+        handleAudioPlay();
+    }
 
-            iniciarOrganismo();
+    // {"muted": true|false} — sin parámetro, alterna.
+    else if (strcmp(cmd, "MUTE") == 0) {
 
-        } else {
+        bool m = params["muted"].is<bool>()
+            ? params["muted"].as<bool>()
+            : !organismoMuted;
 
-            detenerOrganismo();
-        }
+        setMuted(m);
+
+        lastTelemetryPub = 0;  // publicar el nuevo estado ya, sin esperar 1 s
     }
 }
 
@@ -108,6 +115,8 @@ setupConfig();
 setupAudio();
 
 loadConfig();
+
+publishConfig();  // la conexión de setupNetwork() ocurrió antes de loadConfig()
 
 
     // --------------------------------------------------------
@@ -208,6 +217,11 @@ loadConfig();
 
 void loop() {
 
+    // MQTT: sin esto el dispositivo no recibe SET / AUDIO_PLAY / MUTE /
+    // AUDIO_UPDATE / UPDATE y el brain lo ve offline.
+    tickNetwork();
+    tickCommands();
+
     // Mantener reproducción WAV activa.
     tickAudio();
 
@@ -219,6 +233,12 @@ void loop() {
     // 4. modifica altura/rate de VOZSEMILLA
     //
     actualizarVoz();
+
+    JsonDocument doc;
+    doc["chip_temp"] = temperatureRead();
+    doc["audio_playing"] = audioBehaviorIsPlaying();
+    doc["muted"] = organismoMuted;
+    publishTelemetry(doc);  // limitado internamente a 1 por segundo
 
     delay(1);
 }
