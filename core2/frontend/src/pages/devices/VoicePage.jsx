@@ -63,6 +63,7 @@ export default function VoicePage({ node, sendCommand, uploadAudio, error }) {
       <ConfigHeader
         deviceId={node.device_id}
         name={config.name}
+        types={(node.meta || {}).voices}
         onCommand={sendCommand}
         hideUnset={hideUnset}
         onHideUnsetChange={setHideUnset}
