@@ -58,6 +58,14 @@ export default function VoicePage({ node, sendCommand, uploadAudio, error }) {
         >
           {muted ? 'Muted — click to unmute' : 'Mute'}
         </button>
+        {/* Plays the uploaded WAV once, as is (ignores mute and behaviour). */}
+        <button
+          className="jog-btn"
+          disabled={!node.online}
+          onClick={() => sendCommand(node.device_id, 'AUDIO_PLAY', {})}
+        >
+          Play
+        </button>
       </div>
 
       <ConfigHeader
