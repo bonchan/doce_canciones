@@ -13,7 +13,7 @@
 // ---------- Identidad --------------------------------------------------------
 
 enum TipoVoz {
-    VOZ_DESCONOCIDA,
+    VOZ_NONE,
     LLAMA,
     INTENTA,
     RESOPLA,
@@ -24,7 +24,12 @@ enum TipoVoz {
     CANTA
 };
 
-static TipoVoz vozActual = VOZ_DESCONOCIDA;
+// Nombres que acepta SET {"name": ...}. Se publican en el announce como
+// "voices" para que la web muestre un dropdown. NONE = no hace nada; es el
+// estado de un nodo recién flasheado. Mantener en sync con identificarVoz().
+#define VOCES_JSON "[\"NONE\",\"LLAMA\",\"INTENTA\",\"RESOPLA\",\"CRUJE\",\"VOZSEMILLA\",\"SALPICA\",\"ACARICIA\",\"CANTA\"]"
+
+static TipoVoz vozActual = VOZ_NONE;
 static char ultimoNombreIdentificado[64] = "";
 
 
@@ -602,7 +607,7 @@ static void identificarVoz() {
 
     else
 
-        vozActual = VOZ_DESCONOCIDA;
+        vozActual = VOZ_NONE;
 
 
     Serial.print("VOZ identificada: ");
@@ -2083,7 +2088,7 @@ static void actualizarVoz() {
 
     if (
         !estado.organismoActivo ||
-        vozActual == VOZ_DESCONOCIDA
+        vozActual == VOZ_NONE
     ) {
 
         return;

@@ -2,7 +2,7 @@
 #define DEVICE_TYPE "voice"
 #define SCRIPT_NAME "esp32C3_voices"
 #define CAPS_PUBLISHES "[\"audio_playing\",\"muted\"]"
-#define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\",\"SET\",\"AUDIO_UPDATE\",\"AUDIO_PLAY\",\"MUTE\"]"
+#define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"SET\",\"AUDIO_UPDATE\",\"AUDIO_PLAY\",\"MUTE\"]"
 
 const char* ZONE = "fitofonias";
 
@@ -48,9 +48,18 @@ void onCommand(const char* cmd, JsonObject params) {
 
     if (strcmp(cmd, "SET") == 0) {
 
+        TipoVoz anterior = vozActual;
+
         handleSetCommand(params);
 
         identificarVoz();
+
+        // Cambió el tipo: cortar lo que sonaba y arrancar el comportamiento
+        // nuevo desde cero (NONE queda en silencio).
+        if (vozActual != anterior) {
+            audioBehaviorStop();
+            iniciarOrganismo();
+        }
     }
 
     else if (strcmp(cmd, "AUDIO_UPDATE") == 0) {
@@ -85,6 +94,13 @@ void onConnected() {
 }
 
 
+// Lista de tipos de voz para el dropdown de VoicePage (llega a node.meta.voices).
+const char* announceExtraFields() {
+
+    return "\"voices\":" VOCES_JSON;
+}
+
+
 // ============================================================
 // SETUP
 // ============================================================
@@ -99,7 +115,6 @@ void setup() {
     Serial.println();
     Serial.println("================================");
     Serial.println("ORGANISMO CUIR 001");
-    Serial.println("PRUEBA LOCAL VOZSEMILLA + COBRE");
     Serial.println("================================");
     Serial.println();
 
@@ -116,59 +131,14 @@ setupAudio();
 
 loadConfig();
 
-publishConfig();  // la conexión de setupNetwork() ocurrió antes de loadConfig()
-
-
-    // --------------------------------------------------------
-    // LittleFS
-    //
-    // El WAV ya fue cargado manualmente como /audio.wav.
-    // Si no existe metadato audioFile, creamos uno local.
-    // --------------------------------------------------------
-
-    if (
-        !audioFile[0] &&
-        LittleFS.exists(AUDIO_PATH)
-    ) {
-
-        strncpy(
-            audioFile,
-            "vozsemilla_local.wav",
-            sizeof(audioFile) - 1
-        );
-
-        audioFile[
-            sizeof(audioFile) - 1
-        ] = '\0';
-
-        Serial.println(
-            "PRUEBA LOCAL: /audio.wav encontrado"
-        );
-    }
-
-
-    // --------------------------------------------------------
-    // Para esta prueba física queremos VOZSEMILLA.
-    //
-    // Si NVS ya contiene VOZSEMILLA, simplemente se conserva.
-    // --------------------------------------------------------
-
+    // Nodo sin tipo guardado: arranca como NONE (en silencio) hasta que se
+    // elija un tipo con SET {"name": ...}. No se guarda en flash.
     if (!name[0]) {
-
-        strncpy(
-            name,
-            "VOZSEMILLA",
-            sizeof(name) - 1
-        );
-
-        name[
-            sizeof(name) - 1
-        ] = '\0';
-
-        Serial.println(
-            "PRUEBA LOCAL: usando VOZSEMILLA"
-        );
+        strncpy(name, "NONE", sizeof(name) - 1);
+        name[sizeof(name) - 1] = '\0';
     }
+
+publishConfig();  // la conexión de setupNetwork() ocurrió antes de loadConfig()
 
 
     identificarVoz();
@@ -186,28 +156,13 @@ publishConfig();  // la conexión de setupNetwork() ocurrió antes de loadConfig
     Serial.print("AUDIO: ");
     Serial.println(audioFile);
 
-    Serial.println();
-    Serial.println(
-        "NO TOCAR EL COBRE DURANTE LA CALIBRACION"
-    );
-    Serial.println();
-
-
     // --------------------------------------------------------
-    // Arranque automático.
-    //
-    // iniciarOrganismo() detectará VOZSEMILLA y calibrará
-    // el sensor de cobre definido en organismo_comportamiento.h
+    // Arranque automático. Si la voz es VOZSEMILLA,
+    // iniciarOrganismo() calibra el sensor de cobre (no tocar).
+    // NONE arranca en silencio.
     // --------------------------------------------------------
 
     iniciarOrganismo();
-
-
-    Serial.println();
-    Serial.println(
-        "LISTO — ahora podes tocar el cobre"
-    );
-    Serial.println();
 }
 
 

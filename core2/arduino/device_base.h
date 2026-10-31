@@ -8,13 +8,13 @@
 #include <ArduinoJson.h>
 #include "config.h"
 
-constexpr const char* FW_VERSION = "0.0.1";
+constexpr const char* FW_VERSION = "0.0.2";
 
 // Each .ino should #define these before #include "device_base.h":
 //   #define DEVICE_TYPE     "sensor.ldr"
 //   #define SCRIPT_NAME     "bichito_dodecaedro"
 //   #define CAPS_PUBLISHES  "[\"light_level\"]"
-//   #define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\"]"
+//   #define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\"]"
 // Capabilities are just announce metadata (for the brain's registry / any
 // dashboard) — they don't enforce anything on-device, keep them in sync
 // with what the sketch actually does by hand.
@@ -28,7 +28,7 @@ constexpr const char* FW_VERSION = "0.0.1";
 #define CAPS_PUBLISHES "[]"
 #endif
 #ifndef CAPS_SUBSCRIBES
-#define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\",\"UPDATE\"]"
+#define CAPS_SUBSCRIBES "[\"IDENTIFY\",\"ALTER\"]"
 #endif
 
 // Sketches that send/receive bigger payloads (e.g. esp32C3_breathe's curves)
@@ -137,38 +137,38 @@ void publishOnline() {
     mqttClient.publish(topicStatus, "online", true);  // retained
 }
 
-// ── OTA ──────────────────────────────────────────────────────────────────
-void updateFirmware(const char* url) {
-    Serial.print("OTA from: "); Serial.println(url);
-    unsigned long startTime = millis();
-    while (millis() - startTime < 5000) {
-        digitalWrite(LED_PIN, LED_ON); delay(50);
-        digitalWrite(LED_PIN, LED_OFF); delay(50);
-    }
-    digitalWrite(LED_PIN, LED_OFF);
+// // ── OTA ──────────────────────────────────────────────────────────────────
+// void updateFirmware(const char* url) {
+//     Serial.print("OTA from: "); Serial.println(url);
+//     unsigned long startTime = millis();
+//     while (millis() - startTime < 5000) {
+//         digitalWrite(LED_PIN, LED_ON); delay(50);
+//         digitalWrite(LED_PIN, LED_OFF); delay(50);
+//     }
+//     digitalWrite(LED_PIN, LED_OFF);
 
-    // stop MQTT loop interference
-    mqttClient.disconnect();
+//     // stop MQTT loop interference
+//     mqttClient.disconnect();
 
-    HTTPClient http;
-    http.begin(url);
+//     HTTPClient http;
+//     http.begin(url);
 
-    t_httpUpdate_return ret = httpUpdate.update(http);
+//     t_httpUpdate_return ret = httpUpdate.update(http);
 
-    switch (ret) {
-        case HTTP_UPDATE_FAILED:
-            Serial.printf("OTA failed: %s\n", httpUpdate.getLastErrorString().c_str());
-            digitalWrite(LED_PIN, LED_OFF);
-            break;
-        case HTTP_UPDATE_NO_UPDATES:
-            Serial.println("OTA: no update");
-            break;
-        case HTTP_UPDATE_OK:
-            Serial.println("OTA ok — rebooting");
-            // device reboots automatically
-            break;
-    }
-}
+//     switch (ret) {
+//         case HTTP_UPDATE_FAILED:
+//             Serial.printf("OTA failed: %s\n", httpUpdate.getLastErrorString().c_str());
+//             digitalWrite(LED_PIN, LED_OFF);
+//             break;
+//         case HTTP_UPDATE_NO_UPDATES:
+//             Serial.println("OTA: no update");
+//             break;
+//         case HTTP_UPDATE_OK:
+//             Serial.println("OTA ok — rebooting");
+//             // device reboots automatically
+//             break;
+//     }
+// }
 
 // ── built-in capabilities — always run, for every sketch ───────────────────
 // Not weak, not meant to be overridden — mqttCallback() below calls this
@@ -184,13 +184,13 @@ void handleBaseCommand(const char* cmd, JsonObject params) {
         unsigned long duration = params["duration"] | 3000;
         alteredActive = true;
         alteredUntil  = millis() + duration;
-    } else if (strcmp(cmd, "UPDATE") == 0) {
-        const char* url = params["url"] | "";
-        if (strlen(url) == 0) {
-            Serial.println("OTA: no url");
-            return;
-        }
-        updateFirmware(url);
+    // } else if (strcmp(cmd, "UPDATE") == 0) {
+    //     const char* url = params["url"] | "";
+    //     if (strlen(url) == 0) {
+    //         Serial.println("OTA: no url");
+    //         return;
+    //     }
+    //     updateFirmware(url);
     }
 }
 
@@ -258,13 +258,14 @@ bool tryConnectWiFi() {
     if (WiFi.status() == WL_CONNECTED) return true;
 
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD, 0, NULL, true);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
     Serial.print("WiFi connecting");
 
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED) {
-        if (millis() - start > 5000) {
+        if (millis() - start > 8000) {
             Serial.println(" timeout.");
-            WiFi.disconnect(true);
+            WiFi.disconnect(false);
             return false;
         }
         delay(200);
