@@ -59,6 +59,9 @@ export interface DisplayInfo {
   since: number
   errors: number // reported since it connected
   lastError: string | null
+  fps: number | null // frames it drew per second, from its last health report
+  visible: boolean | null // its page is on screen (not hidden or minimized)
+  health: number | null // when that report came in (server time, ms)
 }
 
 export interface StateMessage {
@@ -75,7 +78,7 @@ export type ServerMessage =
   | { type: 'pong'; t0: number; server: number }
   | { type: 'displays'; displays: DisplayInfo[] }
   | { type: 'library'; passes: PassSummary[] }
-  | { type: 'command'; action: 'reload' | 'identify' }
+  | { type: 'command'; action: 'reload' | 'identify'; ids?: string[] } // ids: only those displays
 
 export type ControlAction = 'skip' | 'restart' | 'identify' | 'reload'
 
@@ -87,3 +90,4 @@ export type ClientMessage =
   | { type: 'library' }
   | { type: 'settings'; patch: Partial<Settings> }
   | { type: 'error'; message: string }
+  | { type: 'health'; fps: number; visible: boolean } // every few seconds from each display

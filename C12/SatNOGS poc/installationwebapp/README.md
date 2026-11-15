@@ -67,10 +67,24 @@ The image is only changed on screen (each display's copy in memory); the files i
 replace it), `src/art/field.ts` places the words, `src/views/globeWords.ts` shows them on the
 globes and `src/art/burn.ts` draws them into the image.
 
+## core2 (MQTT)
+
+With `mqtt.enabled` in installation.json the server joins core2's bus as a device of type
+`installation.satnogs` (`server/device.ts`, the same contract as the ESP32s): telemetry every 3 s
+with the pass on air, the settings, and every display with whether it is showing (connected, on
+screen and drawing: each display reports its frames per second every 2 s). Commands: `SKIP`,
+`RESTART`, `RELOAD` / `IDENTIFY` (all displays, or `{"ids": [...]}`), `SETTINGS` (the operator
+page's settings, e.g. `{"speed": 4}`) and `QUEUE` (`{"pass_id": ...}`). It's in zone `satnogs`,
+like the display computers' agents (`../agent`), so core2's zone filter shows them together.
+Fill in `username` / `password` (the broker's, as in wind_world's config.cfg) and restart.
+
+The agents use `GET /api/displays` and `POST /api/command` (`{"action": "identify" | "reload",
+"ids": [...]}`) on this server.
+
 ## installation.json
 
-Everything except `server`, `downloads`, `browser` and `displays` can be changed live from the
-operator page (Settings), and saving the file by hand applies too; the other four need a restart.
+Everything except `server`, `downloads`, `browser`, `displays` and `mqtt` can be changed live from the
+operator page (Settings), and saving the file by hand applies too; the other five need a restart.
 
 - `displays`: one entry per window: `view`, `screen` (number from `-List`), optional `audio`,
   `params` (extra query, e.g. `camera=follow`) and `position` (`[x, y]` to place a window by hand

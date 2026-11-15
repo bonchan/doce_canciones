@@ -20,6 +20,8 @@ export interface InstallationConfig extends Settings {
   server: { host: string; port: number }
   downloads: string // listener.py's folder, relative to this project
   browser: string // chrome.exe / msedge.exe path; empty = find one
+  // this server as a device on core2's MQTT bus (see device.ts)
+  mqtt: { enabled: boolean; broker: string; username: string; password: string; zone: string; name: string }
   displays: DisplayConfig[]
 }
 
@@ -41,6 +43,14 @@ const DEFAULTS: InstallationConfig = {
   departSeconds: 6,
   upcoming: 8,
   browser: '',
+  mqtt: {
+    enabled: false,
+    broker: 'mqtt://nuc.local:1883',
+    username: '',
+    password: '',
+    zone: 'satnogs',
+    name: 'satnogs-installation',
+  },
   displays: [],
 }
 
@@ -82,6 +92,7 @@ export function loadConfig(): InstallationConfig {
     ...DEFAULTS,
     ...raw,
     server: { ...DEFAULTS.server, ...raw.server },
+    mqtt: { ...DEFAULTS.mqtt, ...raw.mqtt },
     images: { ...DEFAULTS.images, ...raw.images },
   }
 }

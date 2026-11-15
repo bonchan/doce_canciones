@@ -89,6 +89,7 @@ class Link {
         this.library = msg.passes
         break
       case 'command':
+        if (msg.ids && !msg.ids.includes(DISPLAY_ID)) break // meant for other displays
         if (msg.action === 'reload') location.reload()
         if (msg.action === 'identify') this.identifyUntil = Date.now() + 6000
         break

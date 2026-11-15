@@ -39,6 +39,33 @@ function PhaseFlash() {
   return <div ref={ref} className="phase-flash" />
 }
 
+// Tells the server how this display is doing: frames drawn per second and whether the page is
+// on screen. core2 counts a screen as showing only while these keep coming and say so.
+function HealthReport() {
+  useEffect(() => {
+    let frames = 0
+    let raf = 0
+    const count = () => {
+      frames++
+      raf = requestAnimationFrame(count)
+    }
+    raf = requestAnimationFrame(count)
+    let since = performance.now()
+    const id = setInterval(() => {
+      const now = performance.now()
+      const fps = Math.round((frames * 1000) / Math.max(1, now - since))
+      link.send({ type: 'health', fps, visible: document.visibilityState === 'visible' })
+      frames = 0
+      since = now
+    }, 2000)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearInterval(id)
+    }
+  }, [])
+  return null
+}
+
 function Overlays() {
   const l = useLink()
   const text = useStrings()
@@ -69,6 +96,7 @@ export function Display({ title, children }: { title: keyof Strings['titles']; c
       <main className="display-body">{children}</main>
       <PhaseFlash />
       <Overlays />
+      <HealthReport />
       {AUDIO && <AudioPlayer />}
     </div>
   )

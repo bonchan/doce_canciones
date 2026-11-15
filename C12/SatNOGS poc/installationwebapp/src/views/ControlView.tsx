@@ -58,6 +58,7 @@ export function ControlView() {
               <th>sound</th>
               <th>address</th>
               <th>connected</th>
+              <th>fps</th>
               <th>errors</th>
             </tr>
           </thead>
@@ -69,6 +70,7 @@ export function ControlView() {
                 <td>{d.audio ? '♪' : ''}</td>
                 <td className="dim">{d.address}</td>
                 <td className="dim">{countdown(Date.now() - d.since)} ago</td>
+                <td className={d.fps != null && d.fps < 5 ? 'rx' : 'dim'}>{d.fps ?? '—'}</td>
                 <td className="error-cell" title={d.errors ? `${d.errors} · ${d.lastError}` : undefined}>
                   {d.errors ? `${d.errors} · ${d.lastError}` : ''}
                 </td>
