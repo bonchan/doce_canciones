@@ -3,4 +3,7 @@ images/
 display/
 downloads/
 captures/
+sky_images/
 .env
+*/installation.json
+./installationwebapp/installation.json

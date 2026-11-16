@@ -1,3 +1,5 @@
 node_modules/
 dist/
 server.pid
+# this installation's settings and the MQTT password: installation.example.json is the template
+installation.json
