@@ -224,10 +224,21 @@
 
         // network
         const net = sys.network;
+        // "Wi-Fi “Gallery”", "Ethernet (Wired connection 1)"; signal is the Wi-Fi strength, 0-100
+        const connName = (i) => i.type === "wifi"
+          ? (i.ssid ? `Wi-Fi “${i.ssid}”` : `Wi-Fi${i.connection ? ` (${i.connection})` : ""}`)
+          : `${i.type === "ethernet" ? "Ethernet" : (i.type || "connection")}${i.connection ? ` (${i.connection})` : ""}`;
+        const signal = (i) => i.signal != null
+          ? span(i.signal < 30 ? "bad" : i.signal < 55 ? "warn" : "ok", ` · signal ${i.signal}%`) : "";
+        const internet = (net || []).find((i) => i.internet);
         const network = !net ? `<p class="muted">Only available on Linux.</p>`
-          : `<dl class="facts">${net.map((iface) => row(iface.name, (iface.addresses || []).map((a) =>
-              `<div><code>${esc(a.address)}</code> <span class="muted">${esc(a.family)}${a.scope === "link" ? ", link-local" : ""}</span></div>`
-            ).join(""))).join("")}</dl>`;
+          : `<p>${internet ? `Connected to <b>${esc(connName(internet))}</b>${signal(internet)}` : span("bad", "No internet connection")}</p>
+             <dl class="facts">${net.map((iface) => row(iface.name,
+              ((iface.type || iface.connection)
+                ? `<div>${esc(connName(iface))}${signal(iface)}${iface.internet ? `<span class="muted"> · internet goes through here</span>` : ""}</div>` : "")
+              + (iface.addresses || []).map((a) =>
+                `<div><code>${esc(a.address)}</code> <span class="muted">${esc(a.family)}${a.scope === "link" ? ", link-local" : ""}</span></div>`
+              ).join(""))).join("")}</dl>`;
 
         // updates
         const u = sys.update || {};

@@ -113,3 +113,5 @@
   .services td:nth-child(4) { display: none; }
 }
 .system-page label.check { display: flex; align-items: center; gap: 6px; margin-top: 6px; cursor: pointer; }
+.system-page .row-tight { margin-top: 4px; }
+.system-page .row-tight button { padding: 3px 10px; font-size: 12px; }

@@ -48,6 +48,7 @@ $APP_USER ALL=(root) NOPASSWD: $SYSTEMCTL start --no-block doce-update.service, 
   $SYSTEMCTL restart --no-block doce-brain.service, \\
   $SYSTEMCTL restart --no-block doce-files.service, \\
   $SYSTEMCTL restart --no-block mosquitto.service, \\
+  $SYSTEMCTL restart --no-block systemd-timesyncd.service, \\
   $SYSTEMCTL --no-block reboot, \\
   $SYSTEMCTL --no-block poweroff
 EOF
@@ -57,6 +58,34 @@ else
   echo "!! the sudo rule did not validate; the System tab's buttons won't work"
 fi
 rm -f "$RULE"
+
+echo "== clock: set it from the internet as soon as there is a connection"
+# systemd-timesyncd (Ubuntu's time service) waits longer and longer between tries while no time server
+# answers, and with NetworkManager it doesn't notice Wi-Fi coming back. So: retry every 10 s, more
+# servers to fall back on, and ask again right away whenever a connection comes up.
+if systemctl cat systemd-timesyncd.service >/dev/null 2>&1; then
+  as_root mkdir -p /etc/systemd/timesyncd.conf.d
+  printf '%s\n' \
+    "# Written by doce_canciones core2/scripts/update.sh" \
+    "[Time]" \
+    "FallbackNTP=ntp.ubuntu.com time.cloudflare.com time.google.com pool.ntp.org" \
+    "ConnectionRetrySec=10" \
+    | as_root tee /etc/systemd/timesyncd.conf.d/doce-canciones.conf >/dev/null
+  if [ -d /etc/NetworkManager/dispatcher.d ]; then
+    # NetworkManager runs this (as root) on every connection change; it has to be root's and executable
+    printf '%s\n' \
+      "#!/bin/sh" \
+      "# Written by doce_canciones core2/scripts/update.sh: a connection came up, get the time now." \
+      'case "$2" in up|connectivity-change) systemctl restart --no-block systemd-timesyncd.service ;; esac' \
+      | as_root tee /etc/NetworkManager/dispatcher.d/90-doce-timesync >/dev/null
+    as_root chmod 0755 /etc/NetworkManager/dispatcher.d/90-doce-timesync
+    as_root chown root:root /etc/NetworkManager/dispatcher.d/90-doce-timesync
+  fi
+  as_root timedatectl set-ntp true
+  as_root systemctl restart systemd-timesyncd.service
+else
+  echo "systemd-timesyncd isn't the time service here (chrony?): left as it is"
+fi
 
 if [ "${1:-}" != "--no-restart" ]; then
   echo "== restart"

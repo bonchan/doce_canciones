@@ -11,6 +11,7 @@ function duration(secs) {
   const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
   if (d) return `${d}d ${h}h`;
   if (h) return `${h}h ${m}m`;
+  if (secs < 60) return `${Math.round(secs)}s`;
   return `${m}m`;
 }
 const ago = (secs, now) => `${duration(Math.max(0, now - secs))} ago`;
@@ -65,7 +66,7 @@ export default function SystemPage({ apiKey, setApiKey }) {
       </header>
 
       <div className="sys-grid">
-        <Overview system={system} />
+        <Overview system={system} apiKey={apiKey} />
         <Installation system={system} />
         <Services system={system} apiKey={apiKey} />
         <Network system={system} />
@@ -97,7 +98,53 @@ function Fact({ label, system, value }) {
   );
 }
 
-function Overview({ system }) {
+/** Synced or not, and when it isn't, why: the time service off, no time server answering yet. */
+function Clock({ synced, clock, now, apiKey }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ text: '', bad: false });
+  const c = clock || {};
+
+  async function syncNow() {
+    setBusy(true); setMsg({ text: '', bad: false });
+    try {
+      await request('POST', '/api/system/sync-clock', { apiKey });
+      setMsg({ text: 'asking the time servers again…', bad: false });
+    } catch (e) {
+      setMsg({ text: e.message, bad: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  let why = null;
+  if (!synced && clock) {
+    if (!c.ntp_enabled) why = 'getting the time from the internet is turned off (run scripts/update.sh)';
+    else if (c.service && c.service !== 'active') why = `the time service is ${c.service}`;
+    else if (!c.server) why = 'no time server has answered yet: is there internet?';
+    else why = `waiting for ${c.server}`;
+  }
+
+  return (
+    <>
+      <span className={synced ? 'ok' : 'bad'}>{synced ? 'synced with the internet' : 'NOT synced'}</span>
+      {synced && c.server && <span className="hint"> · {c.server}</span>}
+      {why && <div className="hint">{why}</div>}
+      {c.last_sync && <div className="hint">last time received {duration(Math.max(0, now - c.last_sync))} ago</div>}
+      {!synced && c.poll_interval && <div className="hint">asks again every {duration(c.poll_interval)}</div>}
+      {!synced && (
+        <div className="row-tight">
+          <button disabled={busy || !apiKey} onClick={syncNow}
+            title={apiKey ? 'Ask the time servers again now' : 'Needs the X-API-Key'}>
+            Sync now
+          </button>
+        </div>
+      )}
+      {msg.text && <div className={msg.bad ? 'bad' : 'hint'}>{msg.text}</div>}
+    </>
+  );
+}
+
+function Overview({ system, apiKey }) {
   const now = useNow();
   const s = system || {};
   const temp = s.temperature ?? null, cpu = s.cpu ?? null, mem = s.memory ?? null, up = s.uptime ?? null;
@@ -112,7 +159,7 @@ function Overview({ system }) {
           {duration(up)} <span className="hint">· since {longDate(now - up)}</span>
         </>} />
         <Fact label="Clock" system={system} value={s.clock_synced !== null && s.clock_synced !== undefined && (
-          <span className={s.clock_synced ? 'ok' : 'bad'}>{s.clock_synced ? 'synced with the internet' : 'NOT synced'}</span>
+          <Clock synced={s.clock_synced} clock={s.clock} now={now} apiKey={apiKey} />
         )} />
         <Fact label="Temperature" system={system} value={temp !== null && (
           <span className={temp >= 85 ? 'bad' : temp >= 75 ? 'caution' : ''}>{temp.toFixed(1)} °C</span>
@@ -218,9 +265,25 @@ function Services({ system, apiKey }) {
   );
 }
 
-/** How other computers reach the NUC: by name, and every IPv4 / IPv6 address it has. */
+/** "Wi-Fi “Gallery”", "Ethernet (Wired connection 1)", or just the type. */
+function connectionName(iface) {
+  if (iface.type === 'wifi') return iface.ssid ? `Wi-Fi “${iface.ssid}”` : `Wi-Fi${iface.connection ? ` (${iface.connection})` : ''}`;
+  const kind = iface.type === 'ethernet' ? 'Ethernet' : iface.type || 'connection';
+  return iface.connection ? `${kind} (${iface.connection})` : kind;
+}
+
+function SignalLabel({ signal }) {
+  return (
+    <span className={signal < 30 ? 'bad' : signal < 55 ? 'caution' : 'ok'} title="Wi-Fi signal strength">
+      {' '}· signal {signal}%
+    </span>
+  );
+}
+
+/** What the NUC is connected to, and how other computers reach it: by name, and every IPv4 / IPv6 address. */
 function Network({ system }) {
   const s = system || {};
+  const internet = (s.network || []).find((iface) => iface.internet);
   const port = window.location.port || '8000';
   const links = [];
   if (s.hostname) links.push(`http://${s.hostname}.local:${port}`);
@@ -235,6 +298,11 @@ function Network({ system }) {
       {!system && <p className="hint">…</p>}
       {system && s.network && (
         <>
+          <p>
+            {internet
+              ? <>Connected to <b>{connectionName(internet)}</b>{internet.signal != null && <SignalLabel signal={internet.signal} />}</>
+              : <span className="bad">No internet connection</span>}
+          </p>
           <p className="hint">Open the webapp from another computer at:</p>
           <ul className="links">
             {links.map((l) => <li key={l}><a href={l}>{l}</a></li>)}
@@ -244,6 +312,13 @@ function Network({ system }) {
               <React.Fragment key={iface.name}>
                 <dt>{iface.name}</dt>
                 <dd>
+                  {(iface.type || iface.connection) && (
+                    <div>
+                      {connectionName(iface)}
+                      {iface.signal != null && <SignalLabel signal={iface.signal} />}
+                      {iface.internet && <span className="hint"> · internet goes through here{iface.gateway ? ` (router ${iface.gateway})` : ''}</span>}
+                    </div>
+                  )}
                   {iface.addresses.map((a) => (
                     <div key={a.address}>
                       <code>{a.address}</code> <span className="hint">{a.family}{a.scope === 'link' ? ', link-local' : ''}</span>

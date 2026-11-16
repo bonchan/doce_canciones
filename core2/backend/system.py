@@ -42,6 +42,7 @@ POWER_COMMANDS = {
     "restart-app": ["systemctl", "restart", "--no-block", f"{BRAIN}.service"],
     "restart-files": ["systemctl", "restart", "--no-block", f"{FILES}.service"],
     "restart-mqtt": ["systemctl", "restart", "--no-block", "mosquitto.service"],
+    "sync-clock": ["systemctl", "restart", "--no-block", "systemd-timesyncd.service"],
     "reboot": ["systemctl", "--no-block", "reboot"],
     "poweroff": ["systemctl", "--no-block", "poweroff"],
 }
@@ -144,8 +145,94 @@ def clock_synced() -> bool | None:
     return {"yes": True, "no": False}.get(run("timedatectl", "show", "--property=NTPSynchronized", "--value") or "")
 
 
+TIMESYNC_CLOCK = Path("/var/lib/systemd/timesync/clock")    # systemd-timesyncd touches it on every sync
+
+
+def show(*cmd: str) -> dict:
+    """`timedatectl show`-style KEY=value lines as a dict ({} when the command fails)."""
+    return dict(line.split("=", 1) for line in (run(*cmd) or "").splitlines() if "=" in line)
+
+
+def clock() -> dict | None:
+    """Whether the clock is set from the internet, and why not: the time service off, no time server
+    answering yet, how often it asks, when it last got the time."""
+    td = show("timedatectl", "show")
+    if not td:
+        return None
+    ts = show("timedatectl", "show-timesync")       # only with systemd-timesyncd (Ubuntu's default)
+    try:
+        poll = int(ts.get("PollIntervalUSec", "0")) / 1e6 or None
+    except ValueError:
+        poll = None
+    try:
+        last_sync = TIMESYNC_CLOCK.stat().st_mtime
+    except OSError:
+        last_sync = None
+    return {
+        "synced": td.get("NTPSynchronized") == "yes",
+        "ntp_enabled": td.get("NTP") == "yes",           # `timedatectl set-ntp true` turns it on
+        "service": run("systemctl", "is-active", "systemd-timesyncd"),
+        "server": ts.get("ServerName") or None,          # empty while no server has answered
+        "server_address": ts.get("ServerAddress") or None,
+        "poll_interval": poll,
+        "last_sync": last_sync,
+    }
+
+
+def split_nmcli(line: str) -> list[str]:
+    """nmcli -t separates fields with ':' and writes a ':' inside a value as '\\:'."""
+    fields, cur, i = [], "", 0
+    while i < len(line):
+        if line[i] == "\\" and i + 1 < len(line):
+            cur += line[i + 1]
+            i += 2
+            continue
+        if line[i] == ":":
+            fields.append(cur)
+            cur = ""
+        else:
+            cur += line[i]
+        i += 1
+    fields.append(cur)
+    return fields
+
+
+def connections() -> dict[str, dict]:
+    """What each interface is connected to, from NetworkManager: type, connection name, and for Wi-Fi the
+    network name and signal. {} where there is no NetworkManager (the page then shows addresses only)."""
+    result: dict[str, dict] = {}
+    for line in (run("nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device") or "").splitlines():
+        parts = split_nmcli(line)
+        if len(parts) == 4:
+            device, kind, state, name = parts
+            result[device] = {"type": kind, "state": state, "connection": name or None}
+    # the Wi-Fi network in use on each device: "*" in IN-USE (--rescan no: don't scan, just read)
+    for line in (run("nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,DEVICE", "device", "wifi", "list",
+                     "--rescan", "no") or "").splitlines():
+        parts = split_nmcli(line)
+        if len(parts) == 4 and parts[0].strip() == "*" and parts[3] in result:
+            result[parts[3]]["ssid"] = parts[1] or None
+            result[parts[3]]["signal"] = int(parts[2]) if parts[2].isdigit() else None
+    return result
+
+
+def default_route() -> dict | None:
+    """The interface the NUC reaches the internet through (lowest metric default route)."""
+    out = run("ip", "-j", "route", "show", "default")
+    try:
+        routes = json.loads(out) if out else []
+    except ValueError:
+        return None
+    if not routes:
+        return None
+    best = min(routes, key=lambda r: r.get("metric", 0))
+    return {"dev": best.get("dev"), "gateway": best.get("gateway")}
+
+
 def addresses() -> list[dict] | None:
-    """Every network interface with its IPv4 and IPv6 addresses, so you can see how to reach the NUC."""
+    """Every network interface with its IPv4 and IPv6 addresses, so you can see how to reach the NUC, plus
+    what it is connected to (Wi-Fi network and signal, or the wired connection) and whether the internet
+    goes through it."""
     out = run("ip", "-j", "addr", "show")
     if not out:
         return None
@@ -153,6 +240,8 @@ def addresses() -> list[dict] | None:
         data = json.loads(out)
     except ValueError:
         return None
+    conns = connections()
+    route = default_route()
     result = []
     for iface in data:
         name = iface.get("ifname", "")
@@ -161,8 +250,20 @@ def addresses() -> list[dict] | None:
         addrs = [{"family": "ipv4" if a.get("family") == "inet" else "ipv6",
                   "address": a.get("local"), "scope": a.get("scope")}
                  for a in iface.get("addr_info", []) if a.get("family") in ("inet", "inet6")]
-        if addrs:
-            result.append({"name": name, "addresses": addrs})
+        if not addrs:
+            continue
+        conn = conns.get(name, {})
+        kind = conn.get("type") or ("wifi" if Path(f"/sys/class/net/{name}/wireless").exists() else None)
+        result.append({
+            "name": name,
+            "addresses": addrs,
+            "type": kind,                                 # "wifi", "ethernet", ...
+            "connection": conn.get("connection"),         # NetworkManager's name for it
+            "ssid": conn.get("ssid"),
+            "signal": conn.get("signal"),                 # Wi-Fi signal, 0-100
+            "internet": bool(route and route["dev"] == name),
+            "gateway": route["gateway"] if route and route["dev"] == name else None,
+        })
     return result
 
 
@@ -228,6 +329,7 @@ def info() -> dict:
         "data_dir": str(DATA_DIR),
         "uptime": uptime(),
         "clock_synced": clock_synced(),
+        "clock": clock(),
         "temperature": temperature(),
         "cpu": {"usage": cpu, "cores": os.cpu_count()} if cpu is not None else None,
         "memory": memory(),
@@ -247,7 +349,7 @@ def get_system() -> dict:
 
 
 @router.post("/{action}", dependencies=[Depends(require_api_key)])
-def power(action: Literal["restart-app", "restart-files", "restart-mqtt", "reboot", "poweroff"]) -> dict:
+def power(action: Literal["restart-app", "restart-files", "restart-mqtt", "sync-clock", "reboot", "poweroff"]) -> dict:
     """Restart a service, reboot or power off the NUC. Needs the sudoers rule install.sh writes."""
     cmd = ["sudo", "-n", *POWER_COMMANDS[action]]
     check = run("sudo", "-n", "-l", *POWER_COMMANDS[action])
