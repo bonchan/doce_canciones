@@ -15,7 +15,8 @@ export function MenuView() {
     <div className="page">
       <h1>SatNOGS installation</h1>
       <p className="dim">
-        Every display is one of these views; launch.ps1 opens them full screen, one per monitor (installation.json).
+        Every display is one of these views; on the installation computers the agent opens them full screen, one per
+        screen (../agent, agent.ini).
       </p>
       <ul className="menu">
         {VIEWS.map(([query, text]) => (

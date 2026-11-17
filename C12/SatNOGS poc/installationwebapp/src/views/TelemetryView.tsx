@@ -1,5 +1,9 @@
+import { random } from '../art/phrases.ts'
+import { skyFor } from '../art/sky.ts'
+import { useSkyDome } from '../art/skyImages.ts'
 import { useCanvasLoop } from '../canvas.ts'
 import { COLORS, FONT } from '../colors.ts'
+import { cenitAt } from '../components/Cenit.tsx'
 import { Display } from '../components/Display.tsx'
 import { num, strings, useStrings } from '../i18n.ts'
 import { link, liveSlot, useLink, useTicker } from '../link.ts'
@@ -7,9 +11,14 @@ import { downlinkMHz, dopplerHz, pathLossDb, rangeRate } from '../radio.ts'
 import { activeSlot, geometryFor, phaseAt, recordingTime, satTimeAt, stationFor } from '../timeline.ts'
 
 const D2R = Math.PI / 180
+const DOME_TURN_S = 600 // the sky turns once every 10 minutes
+const DOME_SIZE = 900
 
-// Polar sky plot as seen from the station: center = overhead, edge = horizon, north up
-function SkyPlot({ slotId }: { slotId: number | null }) {
+// Polar sky plot as seen from the station: center = overhead, edge = horizon, north up. Inside
+// it, the pass's sky photo as an all-sky camera would see it (src/art/skyImages.ts), slowly
+// turning, brighter while every screen looks up (Cenit).
+function SkyPlot({ slotId, sky }: { slotId: number | null; sky: string | null }) {
+  const dome = useSkyDome(sky, DOME_SIZE)
   const ref = useCanvasLoop(
     (ctx, w, h, dpr) => {
       ctx.clearRect(0, 0, w, h)
@@ -17,8 +26,24 @@ function SkyPlot({ slotId }: { slotId: number | null }) {
       const cx = w / 2
       const cy = h / 2
       const R = Math.min(w, h) / 2 - 34 * dpr
+      if (dome) {
+        const s = liveSlot(slotId)
+        const t = link.now()
+        const up = s ? cenitAt(s, t).level : 0
+        ctx.save()
+        ctx.beginPath()
+        ctx.arc(cx, cy, R, 0, Math.PI * 2)
+        ctx.clip()
+        ctx.translate(cx, cy)
+        ctx.rotate(random(slotId ?? 0)() * Math.PI * 2 + ((t / 1000) * Math.PI * 2) / DOME_TURN_S)
+        ctx.globalAlpha = 0.78 + 0.22 * up
+        ctx.drawImage(dome, -R, -R, R * 2, R * 2)
+        ctx.restore()
+      }
+      const lines = dome ? 'rgba(214, 226, 240, 0.32)' : COLORS.line
       ctx.lineWidth = dpr
-      ctx.strokeStyle = COLORS.line
+      // over the photo the grid goes light
+      ctx.strokeStyle = lines
       for (const el of [0, 30, 60]) {
         ctx.beginPath()
         ctx.arc(cx, cy, R * (1 - el / 90), 0, Math.PI * 2)
@@ -39,6 +64,7 @@ function SkyPlot({ slotId }: { slotId: number | null }) {
       ctx.fillText(text.south, cx, cy + off)
       ctx.fillText(text.east, cx + off, cy)
       ctx.fillText(text.west, cx - off, cy)
+      if (dome) ctx.fillStyle = 'rgba(214, 226, 240, 0.75)'
       for (const el of [30, 60]) ctx.fillText(`${el}°`, cx + 14 * dpr, cy - R * (1 - el / 90) + 9 * dpr)
 
       const s = liveSlot(slotId)
@@ -62,9 +88,9 @@ function SkyPlot({ slotId }: { slotId: number | null }) {
         ctx.lineWidth = width * dpr
         ctx.stroke()
       }
-      track(g.tAos, g.tLos, 'rgba(127, 212, 255, 0.3)', 2)
+      track(g.tAos, g.tLos, dome ? 'rgba(127, 212, 255, 0.55)' : 'rgba(127, 212, 255, 0.3)', 2)
       track(g.tAos, Math.min(Math.max(ts, g.tAos), g.tLos), COLORS.sat, 3)
-      ctx.fillStyle = COLORS.dim
+      ctx.fillStyle = dome ? COLORS.text : COLORS.dim
       ctx.fillText(text.aos, ...offsetLabel(xy(g.tAos), cx, cy, 22 * dpr))
       ctx.fillText(text.los, ...offsetLabel(xy(g.tLos), cx, cy, 22 * dpr))
       if (g.look(ts).elevation > 0) {
@@ -79,7 +105,7 @@ function SkyPlot({ slotId }: { slotId: number | null }) {
         ctx.shadowBlur = 0
       }
     },
-    [slotId],
+    [slotId, dome],
   )
   return <canvas ref={ref} className="fill" />
 }
@@ -167,12 +193,13 @@ export function TelemetryView() {
   const doppler = dopplerHz(mhz, rr)
   const rec = slot && g ? recordingTime(slot, g, ts) : null
   const sign = (v: number) => (v >= 0 ? '+' : '−')
+  const sky = slot ? skyFor(slot.id, l.state?.sky, config?.sky) : null
 
   return (
     <Display title="telemetry">
       <div className="telemetry">
         <div className="sky">
-          <SkyPlot slotId={slot?.id ?? null} />
+          <SkyPlot slotId={slot?.id ?? null} sky={sky} />
         </div>
         <div className="readouts">
           <Readout label={text.azimuth} value={look ? `${num(look.azimuth, 1)}°` : '—'} />

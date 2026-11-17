@@ -76,7 +76,7 @@
     "decoding": "decoding the recording…",
     "unreadable": "recording unreadable",
     "spectrum": "APT spectrum · last minute",
-    "carrier": "2.4 kHz carrier",
+    "carrier": "2.4 kHz",
     "constellation": "LRPT · QPSK constellation (simulated)",
     "signal": "signal",
     "noSignal": "no signal",

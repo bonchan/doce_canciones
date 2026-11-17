@@ -10,14 +10,12 @@ are. Passes come from `../downloads` (listener.py) and new ones join the rotatio
 
 ```
 pnpm install
-powershell -ExecutionPolicy Bypass -File .\launch.ps1 -List       # which screen is which (left to right)
-powershell -ExecutionPolicy Bypass -File .\launch.ps1             # server + one kiosk window per display
-powershell -ExecutionPolicy Bypass -File .\launch.ps1 -Windowed   # the same in small windows, to try it on one monitor
-powershell -ExecutionPolicy Bypass -File .\launch.ps1 -Stop       # close the displays, stop the server
+pnpm build    # the displays; again after changing the code
+pnpm start    # the server, on http://<this computer>:5180
 ```
 
-The first launch builds the displays (`pnpm build`); after changing the code run `pnpm build`
-again, then launch. Kiosk windows have no browser UI: Alt+F4 closes the one in focus.
+On the installation's Linux computers `../agent/install.sh --server` sets this up as a service,
+and each computer's agent opens the displays full screen, one per screen (`agent.ini`).
 
 Operator page, in a normal browser tab: http://127.0.0.1:5180/?view=control
 (skip / restart the pass, identify which monitor is which, reload all displays, play a pass next).
@@ -30,7 +28,7 @@ Development: `pnpm dev`, then http://127.0.0.1:5180/ lists every view with hot r
 |---|---|
 | `globe` | the recording station seen from space, the orbit, the track and the satellite |
 | `globe` + `camera=follow` | the camera riding along behind the satellite |
-| `image` | the image arriving line by line (put `"audio": true` on this one) |
+| `image` | the image arriving line by line (`view=image&audio=1` plays the sound) |
 | `schedule` | received, on air and upcoming passes with their status and countdowns |
 | `telemetry` | sky plot from the station, Doppler curve, azimuth / elevation / range / downlink |
 | `signal` | the APT recording's spectrum as a waterfall; for METEOR a (simulated) QPSK constellation |
@@ -67,6 +65,64 @@ The image is only changed on screen (each display's copy in memory); the files i
 replace it), `src/art/field.ts` places the words, `src/views/globeWords.ts` shows them on the
 globes and `src/art/burn.ts` draws them into the image.
 
+## Sky
+
+The satellites look down at the clouds; the photos in `../sky_images` look up at them. The `sky`
+setting (a slider on the operator page and on core2's page) is the share of the passes that get
+one: 0 none, 100 all, spread evenly along the timeline (at 50% about every other pass). A pass's
+photo is the same on every display, and they come in one shuffled order, so all of them show
+before any repeats. A pass without a photo looks as before.
+
+- **Every screen, while the pass is on air: ghosts**: now and then the signal breaks up and
+  pieces of the photo come through, more the weaker the signal: often with the satellite low
+  (AOS, LOS), seldom with it overhead. As the pass's radio would: on NOAA (analog) lines torn
+  sideways with their colours split, a faint echo a little to the right, the frame rolling,
+  scanlines; on METEOR (digital) runs of 8 x 8 blocks from the wrong place, a row smeared down,
+  the photo surfacing in scattered blocks. Every display at the same instant, each its own pieces.
+  One at a time: a ghost that would start while another is on doesn't happen.
+  Each of the six on its own (`ghosts`, operator page and core2's page): when it appears (`low`:
+  the more the lower the satellite, as designed; `high`: the other way round; `steady`; `off`),
+  every how many seconds on average (`delay`; for low / high, where there are most) and how
+  strongly (`prominence`, %: 100 as designed, 0 to 500: how many pieces, how big, how far out
+  of place, how opaque). `ghostsOn` turns them all off and back on, keeping those settings.
+  **Test now** (per kind, or all, one after another): that ghost right away on every display at once, at its
+  prominence, whatever its settings say about when, even switched off and on a pass without a
+  photo (it borrows the one the pass would have had).
+- **Every screen but the globes, at the top of the pass**: at the culmination (the satellite as
+  high over the station as it gets) the screens look up for about 10 seconds: the photo fills
+  the screen under the top bar, each display a different window into it, all drifting with the
+  same wind. Not on passes that go by in under 25 s. Its own section of settings (`cenit`,
+  operator page and core2's page): on / off, fade in, hold (centred on the top of the pass), fade
+  out, opacity, zoom (each display's window into the photo), drift with the wind, the shortest
+  pass it stops on; and **Test now**: the moment right away on every display with those settings,
+  even switched off and on a pass without a photo (it borrows the one the pass would have had).
+- **Reception**: behind the scan line, the photo develops wherever the satellite saw cloud (and
+  in the phrase's letters), mirrored, as seen from the other side. That second line sets off a
+  while after AOS, reaches the scan line at 92% of the pass and arrives with it from there.
+- **Globes**: the photo wrapped around the Earth like a texture, over the map (80%): a square
+  from its middle and its mirror image, so it goes round without a seam, the middle over the
+  station. It fades from one pass's sky to the next.
+- **Telemetry**: the sky plot becomes an all-sky camera: the photo as a fisheye dome, zenith in
+  the middle and horizon at the edge, turning slowly under the track.
+- **Signal**: on NOAA the photo is behind the waterfall and shows through its noise (the brighter
+  the noise, the more of it), the signal keeps its colours; on METEOR the constellation's dots
+  take the photo's colours, each the colour of the photo where it lands.
+- **Passes**: each row with a photo over a strip of it; the one on air drifts.
+
+Photos added to the folder join within 30 s. The files are never changed: everything is drawn
+on screen.
+
+The photos are big (up to 24 megapixels). With sharp installed the server sends each display a
+copy at the size it needs; without it they go full size and every display scales them itself,
+which is much heavier for the display computers:
+
+```
+pnpm add sharp
+```
+
+`src/art/sky.ts` picks the photo, `src/art/skyImages.ts` makes the dome and the strips, `src/components/Cenit.tsx` is the moment the screens look up, `src/components/Ghosts.tsx` the
+ghosts (how often, at the top), `server/sky.ts` serves them.
+
 ## core2 (MQTT)
 
 With `mqtt.enabled` in installation.json the server joins core2's bus as a device of type
@@ -74,7 +130,10 @@ With `mqtt.enabled` in installation.json the server joins core2's bus as a devic
 with the pass on air, the settings, and every display with whether it is showing (connected, on
 screen and drawing: each display reports its frames per second every 2 s). Commands: `SKIP`,
 `RESTART`, `RELOAD` / `IDENTIFY` (all displays, or `{"ids": [...]}`), `SETTINGS` (the operator
-page's settings, e.g. `{"speed": 4}`) and `QUEUE` (`{"pass_id": ...}`). It's in zone `satnogs`,
+page's settings, e.g. `{"speed": 4}`, `{"sky": 50}` or `{"ghosts": {"tear": {"delay": 6}}}`, only what's in it changing), `QUEUE` (`{"pass_id": ...}`)
+`GHOST` (a ghost test, now: `{"kind": "tear"}`, `{"kinds": [...]}`, or `{}` for all) and `CENIT`
+(a test of the look-up moment, now). Its
+telemetry names the pass's sky photo (`sky_photo`). It's in zone `satnogs`,
 like the display computers' agents (`../agent`), so core2's zone filter shows them together.
 Fill in `username` / `password` (the broker's, as in wind_world's config.cfg) and restart.
 
@@ -83,16 +142,26 @@ The agents use `GET /api/displays` and `POST /api/command` (`{"action": "identif
 
 ## installation.json
 
-Everything except `server`, `downloads`, `browser`, `displays` and `mqtt` can be changed live from the
-operator page (Settings), and saving the file by hand applies too; the other five need a restart.
+Not in git, because it holds the MQTT user and password: `installation.example.json` is the
+template, copied to `installation.json` the first time the server runs. Settings
+meant for every copy go into the template; the password only into `installation.json`.
 
-- `displays`: one entry per window: `view`, `screen` (number from `-List`), optional `audio`,
-  `params` (extra query, e.g. `camera=follow`) and `position` (`[x, y]` to place a window by hand
-  when monitors use different scaling)
+Everything except `server`, `downloads`, `skyImages` and `mqtt` can be changed live from the
+operator page (Settings), and saving the file by hand applies too; those four need a restart. Which view
+each screen shows is set on each computer, in its agent's `agent.ini`.
+
 - `location`: `station` (each pass over its recording station) or `neuquen`
 - `order`: `shuffle` (varies satellite and station) or `chronological`; `satellites`: only these (empty = all)
 - `speed`: 1 = real time; `waitSeconds` / `approachSeconds` / `departSeconds`: the gaps around each pass
 - `images`: preferred image per satellite family, `volume`, `imagery` (`esri` or offline `natural`)
 - `hideCursor`: hide the mouse pointer on the displays; `language`: `en` or `es`
 - `phrases`: words float around the Earth; the ones the satellite flies over arrive in the image
+- `sky`: % of the passes with a sky photo, 0 to 100 (see Sky); `skyImages`: their folder, `../sky_images`
+- `cenit`: the look-up moment (see Sky): `{ "on": true, "fadeIn": 1.8, "hold": 5.5, "fadeOut":
+  2.6, "opacity": 100, "zoom": 135, "drift": 3, "minPass": 25 }` (seconds; opacity, zoom and drift
+  in %); fields left out are as designed
+- `ghostsOn`: the ghosts at all (`false` keeps their settings below)
+- `ghosts`: per kind (`tear`, `echo`, `roll` on NOAA; `blocks`, `smear`, `mosaic` on METEOR),
+  `{ "appear": "low" | "high" | "steady" | "off", "delay": seconds, "prominence": % }` (see Sky);
+  kinds or fields left out are as designed
 - `server.host`: `0.0.0.0` to let displays on other computers connect (open `http://<this pc>:5180/?view=...` there)

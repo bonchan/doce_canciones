@@ -3,6 +3,8 @@ import * as Cesium from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import { wordField } from '../art/field.ts'
 import { phraseSeed } from '../art/phrases.ts'
+import { skyFor } from '../art/sky.ts'
+import { useSky } from '../art/skyImages.ts'
 import { COLORS, FONT } from '../colors.ts'
 import { Display } from '../components/Display.tsx'
 import { reloadDisplay, reportError } from '../errors.ts'
@@ -38,14 +40,21 @@ function flyToStation(viewer: Cesium.Viewer, station: Station, duration = 2) {
   })
 }
 
+// the sky photo wrapped around the Earth (skyTexture), above the map
+const skyLayers = new WeakSet<Cesium.ImageryLayer>()
+
 function setImagery(viewer: Cesium.Viewer, imagery: SharedConfig['imagery']) {
   const layers = viewer.imageryLayers
-  layers.removeAll()
-  // bundled with Cesium, always available offline
+  for (let i = layers.length - 1; i >= 0; i--) {
+    const layer = layers.get(i)
+    if (!skyLayers.has(layer)) layers.remove(layer)
+  }
+  // bundled with Cesium, always available offline; the map at the bottom, under any sky
   layers.add(
     Cesium.ImageryLayer.fromProviderAsync(
       Cesium.TileMapServiceImageryProvider.fromUrl(Cesium.buildModuleUrl('Assets/Textures/NaturalEarthII')),
     ),
+    0,
   )
   if (imagery === 'esri') {
     layers.addImageryProvider(
@@ -54,8 +63,57 @@ function setImagery(viewer: Cesium.Viewer, imagery: SharedConfig['imagery']) {
         maximumLevel: 18,
         credit: 'Esri, Maxar, Earthstar Geographics',
       }),
+      1,
     )
   }
+}
+
+// The pass's sky photo wrapped around the Earth like a texture: a square from the middle of the
+// photo and its mirror image side by side, so it goes all the way round without a seam, with the
+// photo's middle over the station's longitude. Pole to pole, it squeezes towards the poles.
+const SKY_ALPHA = 0.9 // how much of the map it covers
+const SKY_FADE_MS = 2500 // from one pass's sky to the next
+const SKY_TILE = CAMERA === 'follow' ? 2048 : 1024 // texture: 2 tiles × 1; the close camera needs more
+
+function skyTexture(image: ImageBitmap, lon: number): HTMLCanvasElement {
+  const T = SKY_TILE
+  const side = Math.min(image.width, image.height)
+  const sx = (image.width - side) / 2
+  const sy = (image.height - side) / 2
+  const pair = document.createElement('canvas')
+  pair.width = 2 * T
+  pair.height = T
+  const pc = pair.getContext('2d')!
+  pc.drawImage(image, sx, sy, side, side, 0, 0, T, T)
+  pc.translate(2 * T, 0)
+  pc.scale(-1, 1)
+  pc.drawImage(image, sx, sy, side, side, 0, 0, T, T)
+  // turned round so the photo's middle (x = T / 2) lands on the station's longitude
+  const texture = document.createElement('canvas')
+  texture.width = 2 * T
+  texture.height = T
+  const tc = texture.getContext('2d')!
+  const x = ((((lon + 180) / 360) * 2 * T - T / 2) % (2 * T) + 2 * T) % (2 * T)
+  tc.drawImage(pair, x, 0)
+  tc.drawImage(pair, x - 2 * T, 0)
+  return texture
+}
+
+// a layer's opacity from `from` to `to`, then `done`; a newer fade of the same layer takes over
+const fades = new WeakMap<Cesium.ImageryLayer, number>()
+
+function fade(viewer: Cesium.Viewer, layer: Cesium.ImageryLayer, from: number, to: number, done?: () => void) {
+  const id = (fades.get(layer) ?? 0) + 1
+  fades.set(layer, id)
+  const start = performance.now()
+  const step = () => {
+    if (viewer.isDestroyed() || fades.get(layer) !== id) return
+    const x = Math.min(1, (performance.now() - start) / SKY_FADE_MS)
+    layer.alpha = from + (to - from) * (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2)
+    if (x < 1) requestAnimationFrame(step)
+    else done?.()
+  }
+  requestAnimationFrame(step)
 }
 
 const finite = (g: GeoPoint) => Number.isFinite(g.lat) && Number.isFinite(g.lon) && Number.isFinite(g.alt)
@@ -74,6 +132,8 @@ export function GlobeView() {
   const passId = slot?.pass.id ?? null
   const phrasesOn = l.state?.config.phrases ?? false
   const language = l.state?.config.language
+  const skyFile = slot ? skyFor(slot.id, l.state?.sky, l.state?.config.sky) : null
+  const skyImage = useSky(skyFile, CAMERA === 'follow' ? 2560 : 1920)
 
   useEffect(() => {
     if (import.meta.env.VITE_CESIUM_TOKEN) Cesium.Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_TOKEN
@@ -120,6 +180,42 @@ export function GlobeView() {
   useEffect(() => {
     if (viewerRef.current && imagery) setImagery(viewerRef.current, imagery)
   }, [imagery])
+
+  // the pass's sky around the Earth (skyTexture): fades in over the last one, which fades out
+  useEffect(() => {
+    const viewer = viewerRef.current
+    const config = link.state?.config
+    const s0 = liveSlot(slotId)
+    if (!viewer || !skyImage || !s0 || !config) return
+    const station = stationFor(s0.pass, config)
+    let layer: Cesium.ImageryLayer | null = null
+    let url = ''
+    let alive = true
+    skyTexture(skyImage, station.lon).toBlob(
+      (blob) => {
+        if (!alive || !blob || viewer.isDestroyed()) return
+        url = URL.createObjectURL(blob)
+        layer = new Cesium.ImageryLayer(
+          new Cesium.SingleTileImageryProvider({ url, tileWidth: 2 * SKY_TILE, tileHeight: SKY_TILE }),
+          { alpha: 0 },
+        )
+        skyLayers.add(layer)
+        viewer.imageryLayers.add(layer) // on top
+        fade(viewer, layer, 0, SKY_ALPHA)
+      },
+      'image/jpeg',
+      0.88,
+    )
+    return () => {
+      alive = false
+      const old = layer
+      if (!old) return
+      fade(viewer, old, old.alpha, 0, () => {
+        if (!viewer.isDestroyed()) viewer.imageryLayers.remove(old, true)
+        URL.revokeObjectURL(url)
+      })
+    }
+  }, [slotId, passId, location, skyImage])
 
   // the phrase words around the Earth (art/field.ts): the same words, shuffled with each pass
   useEffect(() => {

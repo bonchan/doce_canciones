@@ -1,4 +1,6 @@
 // WebSocket messages between server/index.ts and the displays
+import type { CenitSettings } from './cenit.ts'
+import type { GhostKind, GhostsSettings } from './ghosts.ts'
 import type { Pass } from './types.ts'
 
 // the part of installation.json every display needs
@@ -11,6 +13,10 @@ export interface SharedConfig {
   hideCursor: boolean // displays hide the mouse pointer
   language: string // displays' language: a file in src/lang (en, es)
   phrases: boolean // reception: a generated phrase arrives inside the image
+  sky: number // % of the passes with a sky photo (../sky_images): 0 none, 100 all (src/art/sky.ts)
+  ghostsOn: boolean // the ghosts at all; off keeps each kind's settings
+  ghosts: GhostsSettings // the sky photo breaking into the signal, per kind (src/shared/ghosts.ts)
+  cenit: CenitSettings // the plain sky photo at the top of the pass (src/shared/cenit.ts)
 }
 
 // everything the control page can change live (saved back to installation.json)
@@ -71,6 +77,20 @@ export interface StateMessage {
   history: Slot[] // most recent first
   config: Settings
   library: LibraryInfo
+  sky: string[] // the sky photos' file names (served at /sky/<name>)
+}
+
+// a test of the ghosts, from the operator page or core2: these kinds, on every display at `at`
+// (server time, a moment after it was asked for, so they all start together), at their prominence
+export interface GhostTest {
+  kinds: GhostKind[]
+  at: number
+  seed: number
+}
+
+// a test of the look-up moment (components/Cenit.tsx): on every display at `at` (server time)
+export interface CenitTest {
+  at: number
 }
 
 export type ServerMessage =
@@ -79,6 +99,8 @@ export type ServerMessage =
   | { type: 'displays'; displays: DisplayInfo[] }
   | { type: 'library'; passes: PassSummary[] }
   | { type: 'command'; action: 'reload' | 'identify'; ids?: string[] } // ids: only those displays
+  | ({ type: 'ghost' } & GhostTest)
+  | ({ type: 'cenit' } & CenitTest)
 
 export type ControlAction = 'skip' | 'restart' | 'identify' | 'reload'
 
@@ -89,5 +111,7 @@ export type ClientMessage =
   | { type: 'queue'; passId: number }
   | { type: 'library' }
   | { type: 'settings'; patch: Partial<Settings> }
+  | { type: 'ghost'; kinds: GhostKind[] } // test these ghosts now
+  | { type: 'cenit' } // test the look-up moment now
   | { type: 'error'; message: string }
   | { type: 'health'; fps: number; visible: boolean } // every few seconds from each display

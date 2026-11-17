@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { glitch } from '../art/burn.ts'
 import type { PathWord } from '../art/field.ts'
 import { random, textSeed } from '../art/phrases.ts'
+import { skyFor } from '../art/sky.ts'
+import { useSky } from '../art/skyImages.ts'
 import { usePathWords } from '../art/usePathWords.ts'
 import { useCanvasLoop } from '../canvas.ts'
 import { COLORS, FONT } from '../colors.ts'
@@ -21,8 +23,37 @@ const TICKS_HZ = [1000, 2000, 2400, 3000, 4000]
 const LUT = Array.from({ length: 256 }, (_, v) => {
   const x = v / 255
   const c = (n: number) => 255 * Math.min(1, Math.max(0, n))
-  return [c(x * 2.2 - 0.6), c(x * 1.6 - 0.15), c(0.25 + x * 1.4)]
+  return [c(x * 2.2 - 0.6), c(x * 1.6 - 0.15), c(0.25 + x * 1.4)] as [number, number, number]
 })
+
+// With a sky photo the noise is the photo: it lies behind the waterfall and shows through the
+// noise, as much as the noise is bright, while the signal keeps its colours. Per spectrogram
+// value, the colour and opacity of the waterfall's pixel over the photo, so that the two read
+// signal x its colour + (1 - signal) x noise x photo.
+const SIGNAL_FROM = 120 // where the signal starts taking over from the noise
+const SIGNAL_FULL = 210
+const NOISE_FULL = 130 // noise this bright lets all of the photo through
+const OVER_SKY = LUT.map(([r, g, b], v): [number, number, number, number] => {
+  const x = Math.min(1, Math.max(0, (v - SIGNAL_FROM) / (SIGNAL_FULL - SIGNAL_FROM)))
+  const signal = x * x * (3 - 2 * x)
+  const grain = Math.min(1, v / NOISE_FULL) ** 0.8
+  const a = signal + (1 - signal) * (1 - grain)
+  return a > 0 ? [(signal * r) / a, (signal * g) / a, (signal * b) / a, a * 255] : [0, 0, 0, 0]
+})
+
+// a photo filling w x h (cover), as a canvas
+function coverCanvas(image: ImageBitmap, w: number, h: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const k = Math.max(w / image.width, h / image.height)
+  canvas
+    .getContext('2d')!
+    .drawImage(image, (w - image.width * k) / 2, (h - image.height * k) / 2, image.width * k, image.height * k)
+  return canvas
+}
+
+const OPAQUE = LUT.map(([r, g, b]): [number, number, number, number] => [r, g, b, 255])
 
 const noise = () => Math.floor(Math.random() ** 2 * 70)
 
@@ -86,10 +117,13 @@ function wordMark(word: PathWord, screenW: number, screenH: number): Mark {
 
 // APT: the real recording's spectrum, newest row on top, scrolling down; noise outside the pass.
 // Each phrase word gets written into it from the moment the satellite reaches it, bottom of the
-// letters first, so it rises in at the top and scrolls down with the signal.
-function Waterfall({ slotId, url, words }: { slotId: number; url: string; words: PathWord[] | null }) {
+// letters first, so it rises in at the top and scrolls down with the signal. On a pass with a
+// sky photo, the photo shows through the noise (OVER_SKY).
+function Waterfall(props: { slotId: number; url: string; words: PathWord[] | null; sky: ImageBitmap | null }) {
+  const { slotId, url, words, sky } = props
   const text = useStrings().signal
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const skyRef = useRef<HTMLCanvasElement>(null)
   const specRef = useRef<Spectrogram | null>(null)
   const [status, setStatus] = useState<'decoding' | 'ready' | 'error'>('decoding')
 
@@ -110,9 +144,28 @@ function Waterfall({ slotId, url, words }: { slotId: number; url: string; words:
     }
   }, [url])
 
+  // the photo behind, at the waterfall's size on screen
+  useEffect(() => {
+    const back = skyRef.current
+    if (!back || !sky) return
+    const paint = () => {
+      const dpr = window.devicePixelRatio || 1
+      const w = Math.max(1, Math.round(back.clientWidth * dpr))
+      const h = Math.max(1, Math.round(back.clientHeight * dpr))
+      back.width = w
+      back.height = h
+      back.getContext('2d')!.drawImage(coverCanvas(sky, w, h), 0, 0)
+    }
+    paint()
+    const observer = new ResizeObserver(paint)
+    observer.observe(back)
+    return () => observer.disconnect()
+  }, [sky])
+
   useEffect(() => {
     const canvas = canvasRef.current!
     const ctx = canvas.getContext('2d')!
+    const overSky = !!sky
     const marks = (words ?? []).map((w) => wordMark(w, canvas.clientWidth || 900, canvas.clientHeight || 600))
     canvas.width = COLUMNS
     canvas.height = VISIBLE_ROWS
@@ -134,11 +187,11 @@ function Waterfall({ slotId, url, words }: { slotId: number; url: string; words:
           if (ink) v = Math.max(v, Math.min(255, Math.round((ink * 225) / 255 + Math.random() * 30)))
         }
         const o = (y * COLUMNS + x) * 4
-        const [r, g, b] = LUT[v]
+        const [r, g, b, a] = (overSky ? OVER_SKY : OPAQUE)[v]
         img.data[o] = r
         img.data[o + 1] = g
         img.data[o + 2] = b
-        img.data[o + 3] = 255
+        img.data[o + 3] = a
       }
     }
 
@@ -163,7 +216,10 @@ function Waterfall({ slotId, url, words }: { slotId: number; url: string; words:
         ctx.putImageData(img, 0, 0)
       } else if (r > last) {
         const n = r - last
+        // copy, not over: the pixels let the photo through, they'd add up
+        ctx.globalCompositeOperation = 'copy'
         ctx.drawImage(canvas, 0, n)
+        ctx.globalCompositeOperation = 'source-over'
         const img = ctx.createImageData(COLUMNS, n)
         for (let y = 0; y < n; y++) fill(img, y, r - y)
         ctx.putImageData(img, 0, 0)
@@ -172,11 +228,12 @@ function Waterfall({ slotId, url, words }: { slotId: number; url: string; words:
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [slotId, status, words])
+  }, [slotId, status, words, sky])
 
   return (
     <div className="waterfall">
-      <canvas ref={canvasRef} />
+      {sky && <canvas ref={skyRef} className="wf-sky" />}
+      <canvas ref={canvasRef} className="wf-main" />
       {TICKS_HZ.map((hz) => (
         <span key={hz} className={hz === 2400 ? 'wf-tick carrier' : 'wf-tick'} style={{ left: `${(hz / 5000) * 100}%` }}>
           {hz === 2400 ? text.carrier : `${hz / 1000} kHz`}
@@ -232,8 +289,13 @@ function wordPoints(text: string): { points: Float32Array; aspect: number } {
 // METEOR LRPT is digital: no audio to show, so a QPSK constellation that locks while the
 // satellite is up and tightens with elevation (simulated). When the satellite reaches a phrase
 // word, the dots gather into its letters for a few seconds, then go back to the signal.
-function Constellation({ slotId, words }: { slotId: number | null; words: PathWord[] | null }) {
+function Constellation(props: { slotId: number | null; words: PathWord[] | null; sky: ImageBitmap | null }) {
+  const { slotId, words, sky } = props
   const text = useStrings().signal
+  // On a pass with a sky photo the locked dots take its colours, each the photo's colour where it
+  // lands: drawn white on a layer of their own, which then takes the photo where it has a dot.
+  const colors = useRef<{ sky: ImageBitmap; canvas: HTMLCanvasElement } | null>(null)
+  const dotsRef = useRef<HTMLCanvasElement | null>(null)
   const shapes = useMemo(
     () => (words ?? []).map((w) => ({ word: w, peak: peakDefinition(w.text), ...wordPoints(w.text.toUpperCase()) })),
     [words],
@@ -282,7 +344,26 @@ function Constellation({ slotId, words }: { slotId: number | null; words: PathWo
       }
       const share = envelope // of the dots on the word; the rest stay the signal
 
-      ctx.fillStyle = locked ? COLORS.rx : COLORS.dim // the word's dots too: same colour
+      // the pen: the screen, or (locked, with a sky photo) the dots' own layer
+      let pen = ctx
+      let photo: HTMLCanvasElement | null = null
+      if (locked && sky) {
+        photo = colors.current?.sky === sky ? colors.current.canvas : null
+        if (!photo || photo.width !== w || photo.height !== h) {
+          photo = coverCanvas(sky, w, h)
+          colors.current = { sky, canvas: photo }
+        }
+        const layer = (dotsRef.current ??= document.createElement('canvas'))
+        if (layer.width !== w || layer.height !== h) {
+          layer.width = w
+          layer.height = h
+        }
+        pen = layer.getContext('2d')!
+        pen.clearRect(0, 0, w, h)
+        pen.fillStyle = '#fff'
+      } else {
+        ctx.fillStyle = locked ? COLORS.rx : COLORS.dim // the word's dots too: same colour
+      }
       const count = Math.round(160 + 290 * envelope)
       const letters: number[] = [] // dots that go on the word: index into its points
       for (let i = 0; i < count; i++) {
@@ -292,7 +373,7 @@ function Constellation({ slotId, words }: { slotId: number | null; words: PathWo
         }
         const sx = locked ? (Math.random() < 0.5 ? -1 : 1) / Math.SQRT2 : 0
         const sy = locked ? (Math.random() < 0.5 ? -1 : 1) / Math.SQRT2 : 0
-        ctx.fillRect(cx + (sx + gauss() * sigma) * scale, cy - (sy + gauss() * sigma) * scale, size, size)
+        pen.fillRect(cx + (sx + gauss() * sigma) * scale, cy - (sy + gauss() * sigma) * scale, size, size)
       }
       if (spell && letters.length) {
         const wordW = Math.min(w * 0.85, h * 0.55 * spell.aspect)
@@ -301,11 +382,17 @@ function Constellation({ slotId, words }: { slotId: number | null; words: PathWo
         for (const k of letters) {
           const x = cx + (spell.points[k] - 0.5) * wordW + gauss() * jitter
           const y = cy + (spell.points[k + 1] - 0.5) * wordH + gauss() * jitter
-          ctx.fillRect(x, y, size, size)
+          pen.fillRect(x, y, size, size)
         }
       }
+      if (photo && pen !== ctx) {
+        pen.globalCompositeOperation = 'source-in' // the dots, in the photo's colours
+        pen.drawImage(photo, 0, 0)
+        pen.globalCompositeOperation = 'source-over'
+        ctx.drawImage(pen.canvas, 0, 0)
+      }
     },
-    [slotId, shapes],
+    [slotId, shapes, sky],
   )
   return (
     <div className="waterfall">
@@ -338,14 +425,18 @@ export function SignalView() {
   const words = fontReady ? pathWords : null
   const el = receivingElevation(slot, now)
   const level = el != null && el > 0 ? Math.sin(el * D2R) : 0
+  // the pass's sky photo: behind the waterfall's noise (NOAA), the dots' colours (METEOR)
+  const skyFile = slot ? skyFor(slot.id, l.state?.sky, l.state?.config.sky) : null
+  const apt = !!slot?.pass.audio
+  const sky = useSky(skyFile, apt ? 1920 : 1280)
 
   return (
     <Display title="signal">
       <div className="signal">
         {slot?.pass.audio ? (
-          <Waterfall key={slot.id} slotId={slot.id} url={slot.pass.audio} words={words} />
+          <Waterfall key={slot.id} slotId={slot.id} url={slot.pass.audio} words={words} sky={sky} />
         ) : (
-          <Constellation slotId={slot?.id ?? null} words={words} />
+          <Constellation slotId={slot?.id ?? null} words={words} sky={sky} />
         )}
         <div className="meter">
           <span className="dim">{text.signal}</span>

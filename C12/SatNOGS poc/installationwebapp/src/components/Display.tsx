@@ -4,6 +4,8 @@ import { link, useLink, useTicker } from '../link.ts'
 import { AUDIO, DISPLAY_ID, SHOW_CURSOR, VIEW } from '../params.ts'
 import { activeSlot } from '../timeline.ts'
 import { AudioPlayer } from './AudioPlayer.tsx'
+import { Cenit } from './Cenit.tsx'
+import { Ghosts } from './Ghosts.tsx'
 import { TopBar } from './TopBar.tsx'
 
 const FLASH_MS = 1600
@@ -87,13 +89,19 @@ function Overlays() {
   )
 }
 
-// shell of a kiosk display: shared top bar, flashes, overlays, and the sound if it's this one's
+// shell of a kiosk display: shared top bar, flashes, overlays, the sky photo breaking into the
+// signal (Ghosts), the moment every screen looks up at the sky (Cenit; not the globes), and the
+// sound if it's this one's
 export function Display({ title, children }: { title: keyof Strings['titles']; children: ReactNode }) {
   const l = useLink()
   return (
     <div className={l.state?.config.hideCursor === false || SHOW_CURSOR ? 'display' : 'display hide-cursor'}>
       <TopBar title={title} />
-      <main className="display-body">{children}</main>
+      <main className="display-body">
+        {children}
+        <Ghosts />
+        {VIEW !== 'globe' && <Cenit />}
+      </main>
       <PhaseFlash />
       <Overlays />
       <HealthReport />

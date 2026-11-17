@@ -2,6 +2,19 @@ import { useRef, useState } from 'react'
 import { LANGUAGES } from '../i18n.ts'
 import { DEFAULT_IMAGE, imageGroup } from '../images.ts'
 import { link, useLink } from '../link.ts'
+import { CENIT_DEFAULTS, CENIT_RANGES, type CenitSettings } from '../shared/cenit.ts'
+import {
+  GHOST_APPEAR,
+  GHOST_DEFAULTS,
+  GHOST_DELAY,
+  GHOST_FAMILY,
+  GHOST_KINDS,
+  GHOST_PROMINENCE,
+  type GhostAppear,
+  type GhostKind,
+  type GhostSettings,
+  type GhostsSettings,
+} from '../shared/ghosts.ts'
 import type { PassSummary, Settings } from '../shared/protocol.ts'
 
 const SPEEDS = [0.5, 1, 2, 4, 8, 16, 32, 64]
@@ -39,6 +52,153 @@ function NumberField(props: { value: number; min: number; max: number; step: num
         if (e.key === 'Enter') e.currentTarget.blur()
       }}
     />
+  )
+}
+
+const GHOST_NAMES: Record<GhostKind, string> = {
+  tear: 'torn lines',
+  echo: 'echo',
+  roll: 'rolling frame',
+  blocks: 'blocks',
+  smear: 'smear',
+  mosaic: 'mosaic',
+}
+
+const APPEAR_NAMES: Record<GhostAppear, string> = {
+  low: 'more with the satellite low',
+  high: 'more with the satellite high',
+  steady: 'steady',
+  off: 'off',
+}
+
+// a test: these ghosts right now on every display, at their prominence
+const testGhosts = (kinds: GhostKind[]) => link.send({ type: 'ghost', kinds })
+
+// The reception ghosts (components/Ghosts.tsx): all on or off, and each kind on its own: when it
+// appears, every how many seconds (on average; for low / high where there are most), how
+// strongly, and a test.
+function GhostsFields({ on, ghosts }: { on: boolean; ghosts: GhostsSettings }) {
+  const change = (kind: GhostKind, patch: Partial<GhostSettings>) =>
+    set({ ghosts: { ...ghosts, [kind]: { ...(ghosts[kind] ?? GHOST_DEFAULTS[kind]), ...patch } } })
+  return (
+    <>
+      <div className="field">
+        <span>ghosts: the sky photo breaking into the signal</span>
+        <label className="check">
+          <input type="checkbox" checked={on} onChange={(e) => set({ ghostsOn: e.target.checked })} />
+          {on ? 'on' : 'off (tests still show)'}
+        </label>
+        <button onClick={() => testGhosts([...GHOST_KINDS])}>test all now</button>
+      </div>
+      <div className="field">
+
+        <table className={on ? 'ghost-settings' : 'ghost-settings all-off'}>
+          <thead>
+            <tr>
+              <th />
+              <th>appears</th>
+              <th>every</th>
+              <th>prominence</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {GHOST_KINDS.map((kind) => {
+              const g = ghosts[kind] ?? GHOST_DEFAULTS[kind]
+              return (
+                <tr key={kind} className={g.appear === 'off' ? 'off' : ''}>
+                  <td>
+                    {GHOST_NAMES[kind]} <span className="dim">{GHOST_FAMILY[kind]}</span>
+                  </td>
+                  <td>
+                    <select value={g.appear} onChange={(e) => change(kind, { appear: e.target.value as GhostAppear })}>
+                      {GHOST_APPEAR.map((a) => (
+                        <option key={a} value={a}>
+                          {APPEAR_NAMES[a]}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <NumberField value={g.delay} min={GHOST_DELAY[0]} max={GHOST_DELAY[1]} step={0.5} onCommit={(delay) => change(kind, { delay })} />
+                    <span className="dim"> s</span>
+                  </td>
+                  <td>
+                    <input
+                      type="range"
+                      min={GHOST_PROMINENCE[0]}
+                      max={GHOST_PROMINENCE[1]}
+                      step={10}
+                      value={g.prominence}
+                      onChange={(e) => change(kind, { prominence: +e.target.value })}
+                    />
+                    <span className="dim"> {g.prominence}%</span>
+                  </td>
+                  <td>
+                    <button onClick={() => testGhosts([kind])}>test now</button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
+// the look-up moment's settings: label, unit, step; numbers typed or (%) on a slider
+const CENIT_FIELDS: [keyof typeof CENIT_RANGES, string, 's' | '%', number][] = [
+  ['fadeIn', 'fade in', 's', 0.1],
+  ['hold', 'hold, at the top of the pass', 's', 0.5],
+  ['fadeOut', 'fade out', 's', 0.1],
+  ['opacity', 'opacity', '%', 5],
+  ['zoom', 'zoom', '%', 5],
+  ['drift', 'drift with the wind', '%', 0.5],
+  ['minPass', 'only on passes longer than', 's', 1],
+]
+
+// The look-up moment (components/Cenit.tsx): the plain sky photo, full screen, at the top of a
+// pass with one (not on the globes): on or off, its timing and look, and a test.
+function CenitFields({ c }: { c: CenitSettings }) {
+  const change = (patch: Partial<CenitSettings>) => set({ cenit: { ...c, ...patch } })
+  return (
+    <>
+      <div className="field">
+        <span>look up: the plain sky photo at the top of the pass</span>
+        <label className="check">
+          <input type="checkbox" checked={c.on} onChange={(e) => change({ on: e.target.checked })} />
+          {c.on ? 'on' : 'off (a test still shows)'}
+        </label>
+        <button onClick={() => link.send({ type: 'cenit' })}>test now</button>
+      </div>
+      <div className="field">
+        <table className={c.on ? 'ghost-settings' : 'ghost-settings all-off'}>
+          <tbody>
+            {CENIT_FIELDS.map(([key, label, unit, step]) => {
+              const [min, max] = CENIT_RANGES[key]
+              return (
+                <tr key={key}>
+                  <td>{label}</td>
+                  <td>
+                    {unit === '%' ? (
+                      <input type="range" min={min} max={max} step={step} value={c[key]} onChange={(e) => change({ [key]: +e.target.value })} />
+                    ) : (
+                      <NumberField value={c[key]} min={min} max={max} step={step} onCommit={(v) => change({ [key]: v })} />
+                    )}
+                    <span className="dim">
+                      {' '}
+                      {unit === '%' ? c[key] : ''}
+                      {unit}
+                    </span>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   )
 }
 
@@ -105,6 +265,15 @@ export function SettingsPanel() {
         <span>phrase: words around the Earth, into the image</span>
         <input type="checkbox" checked={s.phrases} onChange={(e) => set({ phrases: e.target.checked })} />
       </label>
+      <label className="field">
+        <span>sky: passes with a photo of the sky from below</span>
+        <input type="range" min={0} max={100} step={5} value={s.sky} onChange={(e) => set({ sky: +e.target.value })} />
+        <span className="dim">
+          {s.sky}% · {l.state?.sky?.length ?? 0} photos
+        </span>
+      </label>
+      <GhostsFields on={s.ghostsOn !== false} ghosts={s.ghosts ?? GHOST_DEFAULTS} />
+      <CenitFields c={{ ...CENIT_DEFAULTS, ...s.cenit }} />
       <label className="field">
         <span>location</span>
         <select value={s.location} onChange={(e) => set({ location: e.target.value as Settings['location'] })}>

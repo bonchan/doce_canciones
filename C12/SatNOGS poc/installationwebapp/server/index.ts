@@ -1,6 +1,7 @@
 // Installation server: one shared timeline for every display.
 //   /ws        state (timeline, config), clock sync, operator controls
 //   /data/...  the downloads folder (images, recordings)
+//   /sky/...   the sky photos, at the size a display asks for (sky.ts)
 //   /cesium/.. Cesium's workers / textures
 //   /          the displays: Vite with hot reload (pnpm dev) or dist/ (pnpm start)
 //   /api/...   displays and commands, for the computers' agents (../agent)
@@ -11,18 +12,21 @@ import path from 'node:path'
 import sirv from 'sirv'
 import { WebSocket, WebSocketServer } from 'ws'
 import type { ClientMessage, DisplayInfo, ServerMessage } from '../src/shared/protocol.ts'
+import { skyFor } from '../src/art/sky.ts'
 import { phaseAt, progressAt } from '../src/timeline.ts'
 import { Conductor } from './conductor.ts'
-import { CONFIG_FILE, ROOT, cleanSettings, loadConfig, saveSettings, settingsOf } from './config.ts'
+import { CONFIG_FILE, ROOT, cleanSettings, ghostKinds, loadConfig, saveSettings, settingsOf } from './config.ts'
 import { startDevice, type Device } from './device.ts'
 import { libraryInfo, scanPasses, summary } from './manifest.ts'
+import { scanSky, serveSky } from './sky.ts'
 
 const PROD = process.argv.includes('--prod')
 let cfg = loadConfig()
-const DOWNLOADS = path.resolve(ROOT, cfg.downloads) // server, downloads: read once, restart to change
+const DOWNLOADS = path.resolve(ROOT, cfg.downloads) // server, downloads, skyImages: read once, restart to change
+const SKY = path.resolve(ROOT, cfg.skyImages)
+let skyPhotos = scanSky(SKY)
 const CESIUM = path.join(ROOT, 'node_modules/cesium/Build/Cesium')
 const DIST = path.join(ROOT, 'dist')
-const PID_FILE = path.join(ROOT, 'server.pid') // launch.ps1 -Stop
 
 // --- displays
 const wss = new WebSocketServer({ noServer: true })
@@ -45,9 +49,20 @@ const state = (): ServerMessage => ({
   history: conductor.history,
   config: settingsOf(cfg),
   library: libraryInfo(conductor.passes),
+  sky: skyPhotos,
 })
 
 const listDisplays = () => broadcast({ type: 'displays', displays: [...displays.values()] })
+
+// a test of the ghosts: these kinds on every display, at once (a moment from now, so that they
+// all have it by then), whatever their settings say about when, at their own prominence
+function testGhosts(kinds: unknown) {
+  const list = ghostKinds(kinds)
+  if (list.length) broadcast({ type: 'ghost', kinds: list, at: Date.now() + 300, seed: (Math.random() * 2 ** 32) >>> 0 })
+}
+
+// a test of the look-up moment: on every display at once (a moment from now), with its settings
+const testCenit = () => broadcast({ type: 'cenit', at: Date.now() + 300 })
 
 // reload / identify, for every display or only some (the agents ask for their own screens')
 function command(action: 'reload' | 'identify', ids?: string[]) {
@@ -154,6 +169,12 @@ wss.on('connection', (ws, req) => {
       case 'settings':
         updateSettings(msg.patch as Record<string, unknown>)
         break
+      case 'ghost':
+        testGhosts(msg.kinds)
+        break
+      case 'cenit':
+        testCenit()
+        break
       case 'health': {
         const d = displays.get(ws)
         if (d) {
@@ -237,6 +258,7 @@ const server = http.createServer((req, res) => {
   if (url === '/health') return void res.end('ok')
   if (url.startsWith('/api/')) return api(req, res, url.split('?')[0])
   if (url.startsWith('/data/')) return mount('/data', serveData, req, res)
+  if (url.startsWith('/sky/')) return void serveSky(req, res, SKY, skyPhotos)
   if (url.startsWith('/cesium/')) return mount('/cesium', serveCesium, req, res)
   if (!serveClient) {
     res.statusCode = 503
@@ -301,6 +323,12 @@ function telemetry() {
     speed: cfg.speed,
     language: cfg.language,
     phrases: cfg.phrases,
+    sky: cfg.sky,
+    sky_photo: on ? skyFor(on.id, skyPhotos, cfg.sky) : null,
+    sky_photos: skyPhotos.length,
+    ghosts_on: cfg.ghostsOn,
+    ghosts: cfg.ghosts,
+    cenit: cfg.cenit,
     hide_cursor: cfg.hideCursor,
     imagery: cfg.imagery,
     location: cfg.location,
@@ -330,6 +358,10 @@ function onCommand(capability: string, p: Record<string, unknown>) {
     case 'QUEUE':
       if (typeof p.pass_id === 'number') conductor.queue(p.pass_id)
       return
+    case 'GHOST': // a test, now: {"kind": "tear"} or {"kinds": [...]}; none: all of them
+      return testGhosts(typeof p.kind === 'string' ? [p.kind] : p.kinds)
+    case 'CENIT': // a test of the look-up moment, now
+      return testCenit()
   }
 }
 
@@ -340,7 +372,7 @@ if (cfg.mqtt.enabled) {
     type: 'installation.satnogs',
     fw: pkg.version,
     publishes: Object.keys(telemetry()),
-    subscribes: ['SKIP', 'RESTART', 'RELOAD', 'IDENTIFY', 'SETTINGS', 'QUEUE'],
+    subscribes: ['SKIP', 'RESTART', 'RELOAD', 'IDENTIFY', 'SETTINGS', 'QUEUE', 'GHOST', 'CENIT'],
     announceExtra: () => ({
       languages: languages(),
       satellites: Object.keys(libraryInfo(conductor.passes).satellites).sort(),
@@ -361,6 +393,12 @@ function rescan() {
   } catch (e) {
     console.error('[library]', e)
   }
+  // photos added to (or taken out of) the sky folder join right away
+  const sky = scanSky(SKY)
+  if (sky.join('|') !== skyPhotos.join('|')) {
+    skyPhotos = sky
+    broadcast(state())
+  }
 }
 rescan()
 setInterval(rescan, 30_000) // listener.py keeps adding passes
@@ -368,21 +406,14 @@ setInterval(() => conductor.tick(), 500)
 setInterval(listDisplays, 5000) // the operator page's fps / showing
 
 server.listen(cfg.server.port, cfg.server.host, () => {
-  fs.writeFileSync(PID_FILE, String(process.pid))
   const host = cfg.server.host === '0.0.0.0' ? 'localhost' : cfg.server.host
   const base = `http://${host}:${cfg.server.port}`
   console.log(`SatNOGS installation${PROD ? '' : ' (dev)'} on ${base}`)
   console.log(`  ${conductor.passes.length} passes from ${DOWNLOADS}`)
+  console.log(`  ${skyPhotos.length} sky photos from ${SKY}`)
   console.log(`  views: ${base}/   operator: ${base}/?view=control`)
 })
 
-process.on('exit', () => {
-  try {
-    fs.unlinkSync(PID_FILE)
-  } catch {
-    // already gone
-  }
-})
 // a moment for the MQTT goodbye ("offline") to go out
 process.on('SIGINT', () => setTimeout(() => process.exit(0), 300))
 process.on('SIGTERM', () => setTimeout(() => process.exit(0), 300))

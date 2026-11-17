@@ -1,33 +1,28 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { CENIT_DEFAULTS, cleanCenit } from '../src/shared/cenit.ts'
+import { GHOST_DEFAULTS, GHOST_KINDS, cleanGhosts, type GhostKind } from '../src/shared/ghosts.ts'
 import type { Settings } from '../src/shared/protocol.ts'
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url))
 export const CONFIG_FILE = path.join(ROOT, 'installation.json')
-
-// one browser window of the installation (launch.ps1 reads these too)
-export interface DisplayConfig {
-  view: string
-  screen: number // 1 = leftmost monitor (launch.ps1 -List)
-  audio?: boolean // this display plays the sound
-  params?: string // extra query, e.g. "camera=follow"
-  position?: [number, number] // window position override, for awkward multi-DPI setups
-}
+// the template in git; installation.json itself isn't (it holds the MQTT password)
+const EXAMPLE_FILE = path.join(ROOT, 'installation.example.json')
 
 // Settings change live (control page, or saving this file); the rest needs a restart
 export interface InstallationConfig extends Settings {
   server: { host: string; port: number }
   downloads: string // listener.py's folder, relative to this project
-  browser: string // chrome.exe / msedge.exe path; empty = find one
+  skyImages: string // the sky photos' folder (sky.ts), relative to this project
   // this server as a device on core2's MQTT bus (see device.ts)
   mqtt: { enabled: boolean; broker: string; username: string; password: string; zone: string; name: string }
-  displays: DisplayConfig[]
 }
 
 const DEFAULTS: InstallationConfig = {
   server: { host: '127.0.0.1', port: 5180 },
   downloads: '../downloads',
+  skyImages: '../sky_images',
   location: 'station',
   imagery: 'natural', // offline: bundled with Cesium, no internet
   order: 'shuffle',
@@ -38,11 +33,14 @@ const DEFAULTS: InstallationConfig = {
   hideCursor: true,
   language: 'en',
   phrases: true,
+  sky: 100,
+  ghostsOn: true,
+  ghosts: GHOST_DEFAULTS,
+  cenit: CENIT_DEFAULTS,
   waitSeconds: 20,
   approachSeconds: 8,
   departSeconds: 6,
   upcoming: 8,
-  browser: '',
   mqtt: {
     enabled: false,
     broker: 'mqtt://nuc.local:1883',
@@ -51,7 +49,6 @@ const DEFAULTS: InstallationConfig = {
     zone: 'satnogs',
     name: 'satnogs-installation',
   },
-  displays: [],
 }
 
 const EDITABLE: (keyof Settings)[] = [
@@ -63,6 +60,10 @@ const EDITABLE: (keyof Settings)[] = [
   'hideCursor',
   'language',
   'phrases',
+  'sky',
+  'ghostsOn',
+  'ghosts',
+  'cenit',
   'order',
   'satellites',
   'waitSeconds',
@@ -78,6 +79,7 @@ const RANGES: Record<string, [number, number]> = {
   approachSeconds: [0, 600],
   departSeconds: [0, 600],
   upcoming: [1, 50],
+  sky: [0, 100],
 }
 
 const CHOICES: Record<string, string[]> = {
@@ -87,6 +89,10 @@ const CHOICES: Record<string, string[]> = {
 }
 
 export function loadConfig(): InstallationConfig {
+  if (!fs.existsSync(CONFIG_FILE) && fs.existsSync(EXAMPLE_FILE)) {
+    fs.copyFileSync(EXAMPLE_FILE, CONFIG_FILE)
+    console.log('[settings] created installation.json from installation.example.json')
+  }
   const raw = fs.existsSync(CONFIG_FILE) ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) : {}
   return {
     ...DEFAULTS,
@@ -94,6 +100,11 @@ export function loadConfig(): InstallationConfig {
     server: { ...DEFAULTS.server, ...raw.server },
     mqtt: { ...DEFAULTS.mqtt, ...raw.mqtt },
     images: { ...DEFAULTS.images, ...raw.images },
+    // a percentage; it used to be on / off
+    sky: typeof raw.sky === 'number' ? Math.min(100, Math.max(0, raw.sky)) : raw.sky === false ? 0 : 100,
+    // any kinds and fields left out: as designed
+    ghosts: cleanGhosts(raw.ghosts),
+    cenit: cleanCenit(raw.cenit),
   }
 }
 
@@ -111,8 +122,13 @@ export function cleanSettings(patch: Record<string, unknown>, current: Installat
   }
   if (typeof patch.hideCursor === 'boolean') out.hideCursor = patch.hideCursor
   if (typeof patch.phrases === 'boolean') out.phrases = patch.phrases
+  if (typeof patch.ghostsOn === 'boolean') out.ghostsOn = patch.ghostsOn
   if (typeof patch.language === 'string' && /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(patch.language)) out.language = patch.language
   if (Array.isArray(patch.satellites) && patch.satellites.every((s) => typeof s === 'string')) out.satellites = patch.satellites
+  // e.g. {"tear": {"delay": 6}}: only what's in it changes
+  if (patch.ghosts && typeof patch.ghosts === 'object') out.ghosts = cleanGhosts(patch.ghosts, current.ghosts)
+  // e.g. {"hold": 8}: only what's in it changes
+  if (patch.cenit && typeof patch.cenit === 'object') out.cenit = cleanCenit(patch.cenit, current.cenit)
   if (patch.images && typeof patch.images === 'object') {
     const images = { ...current.images }
     for (const [family, kind] of Object.entries(patch.images)) if (typeof kind === 'string' && kind) images[family] = kind
@@ -121,7 +137,13 @@ export function cleanSettings(patch: Record<string, unknown>, current: Installat
   return out as Partial<Settings>
 }
 
-// installation.json's layout: one key per line, values inline, one display per line
+// the ghost kinds a test asks for (anything else dropped); none given: all of them
+export function ghostKinds(kinds: unknown): GhostKind[] {
+  return Array.isArray(kinds) ? GHOST_KINDS.filter((k) => kinds.includes(k)) : [...GHOST_KINDS]
+}
+
+// installation.json's layout: one key per line, values inline; an object of objects (ghosts)
+// one entry per line
 const inline = (v: unknown): string => {
   if (Array.isArray(v)) return v.length ? `[${v.map(inline).join(', ')}]` : '[]'
   if (v && typeof v === 'object') {
@@ -131,12 +153,16 @@ const inline = (v: unknown): string => {
   return JSON.stringify(v)
 }
 
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+
+const block = (v: unknown): string => {
+  const entries = isObject(v) ? Object.entries(v) : []
+  if (!entries.length || !entries.every(([, x]) => isObject(x))) return inline(v)
+  return `{\n${entries.map(([k, x]) => `    ${JSON.stringify(k)}: ${inline(x)}`).join(',\n')}\n  }`
+}
+
 function formatConfig(raw: Record<string, unknown>) {
-  const lines = Object.entries(raw).map(([k, v]) =>
-    k === 'displays' && Array.isArray(v) && v.length
-      ? `  "displays": [\n${v.map((d) => `    ${inline(d)}`).join(',\n')}\n  ]`
-      : `  ${JSON.stringify(k)}: ${inline(v)}`,
-  )
+  const lines = Object.entries(raw).map(([k, v]) => `  ${JSON.stringify(k)}: ${block(v)}`)
   return `{\n${lines.join(',\n')}\n}\n`
 }
 

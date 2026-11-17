@@ -1,4 +1,7 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
+import { random } from '../art/phrases.ts'
+import { skyFor } from '../art/sky.ts'
+import { useSkyStrip } from '../art/skyImages.ts'
 import { Display } from '../components/Display.tsx'
 import { fmt, num, useStrings, type Strings } from '../i18n.ts'
 import { useLink, useTicker } from '../link.ts'
@@ -27,7 +30,31 @@ function StatusCell({ slot, status, now, text }: { slot: Slot; status: Status; n
   return <span className="sat">{fmt(phase === 'approach' ? text.schedule.acquiring : text.schedule.next, vars)}</span>
 }
 
-// Departures board: the last passes received, the one on air, the upcoming ones
+function Row(props: { slot: Slot; status: Status; now: number; text: Strings; sky: string | null }) {
+  const { slot: s, status, now, text } = props
+  // a strip of the pass's sky across its row, at a height of the photo of its own
+  const strip = useSkyStrip(props.sky)
+  const style = strip
+    ? ({ '--sky': `url("${strip}")`, '--sky-y': `${Math.round(20 + random(s.id)() * 60)}%` } as CSSProperties)
+    : undefined
+  return (
+    <tr className={strip ? `row-${status} has-sky` : `row-${status}`} style={style}>
+      <td>
+        <StatusCell slot={s} status={status} now={now} text={text} />
+      </td>
+      <td>{hhmm(s.aos, text.locale)}</td>
+      <td>{s.pass.satellite}</td>
+      <td className="station">{s.pass.station_name ?? '—'}</td>
+      <td className="dim">{recorded(s.pass)}</td>
+      <td>{s.pass.max_altitude != null ? `${num(s.pass.max_altitude)}°` : '—'}</td>
+      <td>{countdown(s.los - s.aos)}</td>
+      <td>{s.pass.audio ? text.schedule.apt : text.schedule.digital}</td>
+    </tr>
+  )
+}
+
+// Departures board: the last passes received, the one on air, the upcoming ones; those with a
+// sky photo over a strip of it
 export function ScheduleView() {
   const l = useLink()
   const text = useStrings()
@@ -67,18 +94,14 @@ export function ScheduleView() {
           </thead>
           <tbody>
             {rows.map(([s, status]) => (
-              <tr key={s.id} className={`row-${status}`}>
-                <td>
-                  <StatusCell slot={s} status={status} now={now} text={text} />
-                </td>
-                <td>{hhmm(s.aos, text.locale)}</td>
-                <td>{s.pass.satellite}</td>
-                <td className="station">{s.pass.station_name ?? '—'}</td>
-                <td className="dim">{recorded(s.pass)}</td>
-                <td>{s.pass.max_altitude != null ? `${num(s.pass.max_altitude)}°` : '—'}</td>
-                <td>{countdown(s.los - s.aos)}</td>
-                <td>{s.pass.audio ? text.schedule.apt : text.schedule.digital}</td>
-              </tr>
+              <Row
+                key={s.id}
+                slot={s}
+                status={status}
+                now={now}
+                text={text}
+                sky={skyFor(s.id, state?.sky, state?.config.sky)}
+              />
             ))}
           </tbody>
         </table>

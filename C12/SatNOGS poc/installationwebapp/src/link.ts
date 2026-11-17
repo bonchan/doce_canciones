@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import type { ClientMessage, DisplayInfo, PassSummary, ServerMessage, Slot, StateMessage } from './shared/protocol.ts'
+import type { CenitTest, ClientMessage, DisplayInfo, GhostTest, PassSummary, ServerMessage, Slot, StateMessage } from './shared/protocol.ts'
 import { AUDIO, DISPLAY_ID, VIEW } from './params.ts'
 
 const clientNow = () => performance.timeOrigin + performance.now()
@@ -13,6 +13,8 @@ class Link {
   library: PassSummary[] = []
   connected = false
   identifyUntil = 0
+  ghostTests: GhostTest[] = [] // the last 20 s of them (components/Ghosts.tsx)
+  cenitTests: CenitTest[] = [] // the last few (components/Cenit.tsx)
   private offset = 0
   private samples: { rtt: number; offset: number }[] = []
   private ws: WebSocket | null = null
@@ -92,6 +94,12 @@ class Link {
         if (msg.ids && !msg.ids.includes(DISPLAY_ID)) break // meant for other displays
         if (msg.action === 'reload') location.reload()
         if (msg.action === 'identify') this.identifyUntil = Date.now() + 6000
+        break
+      case 'cenit':
+        this.cenitTests = [...this.cenitTests.slice(-4), { at: msg.at }]
+        break
+      case 'ghost':
+        this.ghostTests = [...this.ghostTests.filter((x) => x.at > msg.at - 20_000), { kinds: msg.kinds, at: msg.at, seed: msg.seed }]
         break
     }
     this.emit()

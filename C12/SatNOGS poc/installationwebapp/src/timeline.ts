@@ -25,6 +25,12 @@ export function phaseAt(s: Slot, t: number): Phase {
 
 export const progressAt = (s: Slot, t: number) => clamp01((t - s.aos) / (s.los - s.aos))
 
+// when the satellite is highest over the station (its culmination, orbit time 0): server time, ms
+export function culminationAt(s: Slot, g: PassGeometry) {
+  const span = g.tLos - g.tAos
+  return s.aos + (span > 0 ? -g.tAos / span : 0.5) * (s.los - s.aos)
+}
+
 export function stationFor(pass: Pass, config: SharedConfig): Station {
   return config.location === 'station' && pass.station ? pass.station : NEUQUEN
 }

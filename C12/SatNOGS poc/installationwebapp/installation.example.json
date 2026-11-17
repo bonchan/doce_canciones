@@ -12,6 +12,16 @@
   "language": "es",
   "phrases": true,
   "sky": 100,
+  "ghostsOn": true,
+  "ghosts": {
+    "tear": { "appear": "low", "delay": 4, "prominence": 100 },
+    "echo": { "appear": "low", "delay": 10, "prominence": 100 },
+    "roll": { "appear": "low", "delay": 16, "prominence": 100 },
+    "blocks": { "appear": "low", "delay": 5, "prominence": 100 },
+    "smear": { "appear": "low", "delay": 10, "prominence": 100 },
+    "mosaic": { "appear": "low", "delay": 10, "prominence": 100 }
+  },
+  "cenit": { "on": true, "fadeIn": 1.8, "hold": 5.5, "fadeOut": 2.6, "opacity": 100, "zoom": 135, "drift": 3, "minPass": 25 },
   "waitSeconds": 0,
   "approachSeconds": 8,
   "departSeconds": 0,
