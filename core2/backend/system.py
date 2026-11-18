@@ -15,6 +15,7 @@ from typing import Literal
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 import broker
 from broker import registry
@@ -24,6 +25,9 @@ from routes import require_api_key
 CORE_DIR = Path(__file__).resolve().parent.parent          # core2/
 DATA_DIR = Path(os.getenv("DOCE_DATA", str(Path.home() / "doce_canciones_data")))
 LOGS_DIR = DATA_DIR / "logs"
+# The preferred Wi-Fi (lines "ssid=..." and "password=..."), written by the System page and read by
+# scripts/watchdog.sh every minute. Only readable by this user (and root, which the watchdog runs as).
+WIFI_FILE = DATA_DIR / "wifi.conf"
 
 BRAIN = "doce-brain"
 FILES = "doce-files"
@@ -43,6 +47,7 @@ POWER_COMMANDS = {
     "restart-files": ["systemctl", "restart", "--no-block", f"{FILES}.service"],
     "restart-mqtt": ["systemctl", "restart", "--no-block", "mosquitto.service"],
     "sync-clock": ["systemctl", "restart", "--no-block", "systemd-timesyncd.service"],
+    "run-watchdog": ["systemctl", "start", "--no-block", f"{WATCHDOG}.service"],
     "reboot": ["systemctl", "--no-block", "reboot"],
     "poweroff": ["systemctl", "--no-block", "poweroff"],
 }
@@ -267,6 +272,38 @@ def addresses() -> list[dict] | None:
     return result
 
 
+def wifi_settings() -> dict:
+    """The preferred Wi-Fi network and its password, as saved from the System page (WIFI_FILE)."""
+    values: dict[str, str] = {}
+    try:
+        for line in WIFI_FILE.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            values.setdefault(key, value)
+    except OSError:
+        pass
+    return {"ssid": values.get("ssid") or None, "password": values.get("password") or None}
+
+
+def wifi() -> dict | None:
+    """The Wi-Fi the watchdog keeps the NUC on and whether it's on it now (never the password itself).
+    None where there's no Wi-Fi adapter and nothing set."""
+    saved = wifi_settings()
+    preferred = saved["ssid"]
+    conns = connections()
+    device = next((name for name, c in conns.items() if c.get("type") == "wifi"), None)
+    if device is None and preferred is None:
+        return None
+    conn = conns.get(device, {})
+    return {
+        "preferred": preferred,
+        "has_password": saved["password"] is not None,
+        "device": device,
+        "state": conn.get("state"),                       # "connected", "disconnected", "unavailable", ...
+        "ssid": conn.get("ssid"),
+        "on_preferred": preferred is not None and conn.get("ssid") == preferred,
+    }
+
+
 def services() -> list[dict] | None:
     """Each service: running or not, since when, and how many times systemd had to restart it."""
     if not shutil.which("systemctl"):
@@ -335,6 +372,7 @@ def info() -> dict:
         "memory": memory(),
         "disk": {"total": disk.total, "used": disk.used, "free": disk.free},
         "network": addresses(),
+        "wifi": wifi(),
         "services": services(),
         "watchdog": watchdog(),
         "mqtt": {"connected": broker.client.is_connected(), "broker": f"{broker.MQTT_BROKER}:{broker.MQTT_PORT}"},
@@ -348,8 +386,49 @@ def get_system() -> dict:
     return info()
 
 
+class WifiSettings(BaseModel):
+    ssid: str = ""                 # empty: no preferred network
+    password: str | None = None    # empty or left out: keep the saved one (same network) / none
+
+
+@router.post("/wifi", dependencies=[Depends(require_api_key)])
+def set_wifi(body: WifiSettings) -> dict:
+    """Save the preferred Wi-Fi network and have the watchdog check it right away."""
+    ssid = body.ssid.strip()
+    password = body.password or None
+    if any(c in ssid + (password or "") for c in "\r\n\0"):
+        raise HTTPException(422, "line breaks aren't allowed")
+    if len(ssid.encode()) > 32:
+        raise HTTPException(422, "a Wi-Fi network name is at most 32 bytes")
+    if password is not None and not 8 <= len(password) <= 63:
+        raise HTTPException(422, "a Wi-Fi (WPA) password is 8 to 63 characters")
+    old = wifi_settings()
+    if password is None and ssid == old["ssid"]:
+        password = old["password"]
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if ssid:
+        tmp = WIFI_FILE.with_suffix(".tmp")
+        tmp.unlink(missing_ok=True)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)   # created private: it holds the password
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(f"ssid={ssid}\n" + (f"password={password}\n" if password else ""))
+        os.replace(tmp, WIFI_FILE)
+    else:
+        WIFI_FILE.unlink(missing_ok=True)
+    logger.warning(f"preferred Wi-Fi set to {ssid!r} from the web page" if ssid else "preferred Wi-Fi cleared")
+
+    # run the watchdog now instead of within the minute
+    applied_now = run("sudo", "-n", "-l", *POWER_COMMANDS["run-watchdog"]) is not None
+    if applied_now:
+        subprocess.Popen(["sudo", "-n", *POWER_COMMANDS["run-watchdog"]],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return {"ssid": ssid or None, "has_password": password is not None, "applied_now": applied_now}
+
+
 @router.post("/{action}", dependencies=[Depends(require_api_key)])
-def power(action: Literal["restart-app", "restart-files", "restart-mqtt", "sync-clock", "reboot", "poweroff"]) -> dict:
+def power(action: Literal["restart-app", "restart-files", "restart-mqtt", "sync-clock", "run-watchdog",
+                          "reboot", "poweroff"]) -> dict:
     """Restart a service, reboot or power off the NUC. Needs the sudoers rule install.sh writes."""
     cmd = ["sudo", "-n", *POWER_COMMANDS[action]]
     check = run("sudo", "-n", "-l", *POWER_COMMANDS[action])

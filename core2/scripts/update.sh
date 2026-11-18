@@ -49,6 +49,7 @@ $APP_USER ALL=(root) NOPASSWD: $SYSTEMCTL start --no-block doce-update.service, 
   $SYSTEMCTL restart --no-block doce-files.service, \\
   $SYSTEMCTL restart --no-block mosquitto.service, \\
   $SYSTEMCTL restart --no-block systemd-timesyncd.service, \\
+  $SYSTEMCTL start --no-block doce-watchdog.service, \\
   $SYSTEMCTL --no-block reboot, \\
   $SYSTEMCTL --no-block poweroff
 EOF
@@ -85,6 +86,24 @@ if systemctl cat systemd-timesyncd.service >/dev/null 2>&1; then
   as_root systemctl restart systemd-timesyncd.service
 else
   echo "systemd-timesyncd isn't the time service here (chrony?): left as it is"
+fi
+
+echo "== Wi-Fi: no power saving, never stop retrying"
+# Wi-Fi power saving is a usual reason for a NUC dropping off Wi-Fi, and NetworkManager stops trying a
+# network after 4 failed tries. The watchdog reconnects on top of this (preferred network: System page).
+# zz-: NetworkManager reads conf.d in order and Ubuntu's default-wifi-powersave-on.conf turns it on.
+if [ -d /etc/NetworkManager/conf.d ] && command -v nmcli >/dev/null; then
+  printf '%s\n' \
+    "# Written by doce_canciones core2/scripts/update.sh: Wi-Fi power saving off (2 = disable)" \
+    "[connection]" \
+    "wifi.powersave=2" \
+    | as_root tee /etc/NetworkManager/conf.d/zz-doce-canciones.conf >/dev/null
+  for uuid in $(nmcli -t -f UUID,TYPE connection show | awk -F: '$2 == "802-11-wireless" { print $1 }'); do
+    as_root nmcli connection modify uuid "$uuid" connection.autoconnect-retries 0 || true
+  done
+  as_root systemctl reload NetworkManager || true     # power saving changes on the next connect or reboot
+else
+  echo "no NetworkManager here: Wi-Fi left as it is"
 fi
 
 if [ "${1:-}" != "--no-restart" ]; then

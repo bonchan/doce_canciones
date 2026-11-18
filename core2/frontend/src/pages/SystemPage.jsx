@@ -69,7 +69,7 @@ export default function SystemPage({ apiKey, setApiKey }) {
         <Overview system={system} apiKey={apiKey} />
         <Installation system={system} />
         <Services system={system} apiKey={apiKey} />
-        <Network system={system} />
+        <Network system={system} apiKey={apiKey} />
         <Watchdog system={system} />
       </div>
       <Updates apiKey={apiKey} />
@@ -280,8 +280,92 @@ function SignalLabel({ signal }) {
   );
 }
 
+/** The Wi-Fi network the watchdog keeps the NUC on, and the form to set it (saved on the NUC, not in .env). */
+function WifiPreferred({ wifi, apiKey }) {
+  const [editing, setEditing] = useState(false);
+  const [ssid, setSsid] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ text: '', bad: false });
+  if (!wifi) return null;
+
+  function edit() {
+    setSsid(wifi.preferred || wifi.ssid || '');
+    setPassword('');
+    setMsg({ text: '', bad: false });
+    setEditing(true);
+  }
+
+  async function save(newSsid) {
+    setBusy(true);
+    setMsg({ text: '', bad: false });
+    try {
+      const r = await request('POST', '/api/system/wifi', { apiKey, body: { ssid: newSsid, password: password || null } });
+      setEditing(false);
+      setMsg({
+        text: !r.ssid ? 'Preferred Wi-Fi cleared.'
+          : r.applied_now ? `Saved. Connecting to “${r.ssid}” now (if it isn't already)…`
+          : `Saved. The watchdog connects to “${r.ssid}” within a minute.`,
+        bad: false,
+      });
+    } catch (err) {
+      setMsg({ text: `Couldn't save: ${err.message}`, bad: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const samePreferred = ssid.trim() === (wifi.preferred || '');
+  return (
+    <div className="wifi-preferred">
+      {wifi.preferred ? (
+        <p>
+          Preferred Wi-Fi <b>“{wifi.preferred}”</b>:{' '}
+          {wifi.on_preferred
+            ? <span className="ok">connected</span>
+            : <span className="bad">
+                {wifi.ssid ? `on “${wifi.ssid}” instead` : `not connected${wifi.state ? ` (${wifi.state})` : ''}`}
+              </span>}
+          <span className="hint"> · {wifi.has_password ? 'password saved' : 'no password saved'} · the watchdog checks every minute and reconnects</span>
+        </p>
+      ) : (
+        <p className="hint">No preferred Wi-Fi set: the watchdog only reconnects when there's no internet at all.</p>
+      )}
+      {!editing && (
+        <p>
+          <button disabled={!apiKey} onClick={edit} title={apiKey ? '' : 'Needs the X-API-Key'}>
+            {wifi.preferred ? 'Change Wi-Fi' : 'Set preferred Wi-Fi'}
+          </button>
+        </p>
+      )}
+      {editing && (
+        <form className="wifi-form" onSubmit={(e) => { e.preventDefault(); save(ssid.trim()); }}>
+          <label>
+            Network name
+            <input value={ssid} onChange={(e) => setSsid(e.target.value)} maxLength={32} required autoComplete="off" />
+          </label>
+          <label>
+            Password
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} maxLength={63}
+              autoComplete="new-password"
+              placeholder={samePreferred && wifi.has_password ? 'leave empty to keep the saved one' : 'empty for an open or already saved network'} />
+          </label>
+          <div className="row-tight">
+            <button type="submit" className="primary" disabled={busy || !ssid.trim()}>Save</button>
+            <button type="button" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
+            {wifi.preferred && (
+              <button type="button" className="danger" disabled={busy} onClick={() => save('')}>Clear preferred Wi-Fi</button>
+            )}
+          </div>
+        </form>
+      )}
+      {msg.text && <p className={msg.bad ? 'bad' : 'ok'}>{msg.text}</p>}
+    </div>
+  );
+}
+
 /** What the NUC is connected to, and how other computers reach it: by name, and every IPv4 / IPv6 address. */
-function Network({ system }) {
+function Network({ system, apiKey }) {
   const s = system || {};
   const internet = (s.network || []).find((iface) => iface.internet);
   const port = window.location.port || '8000';
@@ -303,6 +387,7 @@ function Network({ system }) {
               ? <>Connected to <b>{connectionName(internet)}</b>{internet.signal != null && <SignalLabel signal={internet.signal} />}</>
               : <span className="bad">No internet connection</span>}
           </p>
+          <WifiPreferred wifi={s.wifi} apiKey={apiKey} />
           <p className="hint">Open the webapp from another computer at:</p>
           <ul className="links">
             {links.map((l) => <li key={l}><a href={l}>{l}</a></li>)}
