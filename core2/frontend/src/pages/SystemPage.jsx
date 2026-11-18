@@ -152,9 +152,6 @@ function Overview({ system, apiKey }) {
     <Section title="NUC">
       <dl className="facts">
         <Fact label="Host" system={system} value={s.hostname} />
-        <Fact label="Code" system={system} value={s.version && <>
-          <code>{s.version.short}</code> {s.version.subject} <span className="hint">{longDate(s.version.time)}</span>
-        </>} />
         <Fact label="Up for" system={system} value={up !== null && <>
           {duration(up)} <span className="hint">· since {longDate(now - up)}</span>
         </>} />
@@ -318,24 +315,16 @@ function WifiPreferred({ wifi, apiKey }) {
   const samePreferred = ssid.trim() === (wifi.preferred || '');
   return (
     <div className="wifi-preferred">
-      {wifi.preferred ? (
-        <p>
-          Preferred Wi-Fi <b>“{wifi.preferred}”</b>:{' '}
-          {wifi.on_preferred
-            ? <span className="ok">connected</span>
-            : <span className="bad">
-                {wifi.ssid ? `on “${wifi.ssid}” instead` : `not connected${wifi.state ? ` (${wifi.state})` : ''}`}
-              </span>}
-          <span className="hint"> · {wifi.has_password ? 'password saved' : 'no password saved'} · the watchdog checks every minute and reconnects</span>
-        </p>
-      ) : (
-        <p className="hint">No preferred Wi-Fi set: the watchdog only reconnects when there's no internet at all.</p>
-      )}
       {!editing && (
         <p>
           <button disabled={!apiKey} onClick={edit} title={apiKey ? '' : 'Needs the X-API-Key'}>
             {wifi.preferred ? 'Change Wi-Fi' : 'Set preferred Wi-Fi'}
           </button>
+          <span className="hint">
+            {wifi.preferred
+              ? ` preferred “${wifi.preferred}”${wifi.has_password ? ', password saved' : ''}`
+              : ' no preferred network: the watchdog only reconnects when there is no internet at all'}
+          </span>
         </p>
       )}
       {editing && (
@@ -364,10 +353,28 @@ function WifiPreferred({ wifi, apiKey }) {
   );
 }
 
-/** What the NUC is connected to, and how other computers reach it: by name, and every IPv4 / IPv6 address. */
+/** The interfaces to list: those with an address, plus the Wi-Fi adapter while it's disconnected (shown red). */
+function interfaceList(s) {
+  const list = [...(s.network || [])];
+  if (s.wifi?.device && !list.some((iface) => iface.name === s.wifi.device)) {
+    list.push({ name: s.wifi.device, type: 'wifi', addresses: [], down: true });
+  }
+  return list;
+}
+
+/** Green: connected (the Wi-Fi: on the preferred network, if one is set). Red otherwise. The reason goes in the tooltip. */
+function interfaceStatus(iface, wifi) {
+  if (iface.down) return { ok: false, why: `not connected${wifi?.state ? ` (${wifi.state})` : ''}` };
+  if (iface.type === 'wifi' && wifi?.preferred && !wifi.on_preferred) {
+    return { ok: false, why: `on “${iface.ssid || iface.connection}”, not the preferred “${wifi.preferred}”` };
+  }
+  if (!iface.internet) return { ok: true, why: 'connected' };
+  return { ok: true, why: `connected, internet goes through here${iface.gateway ? ` (router ${iface.gateway})` : ''}` };
+}
+
+/** How other computers reach the NUC (by name and every IPv4 / IPv6 address), each interface, and the Wi-Fi setting. */
 function Network({ system, apiKey }) {
   const s = system || {};
-  const internet = (s.network || []).find((iface) => iface.internet);
   const port = window.location.port || '8000';
   const links = [];
   if (s.hostname) links.push(`http://${s.hostname}.local:${port}`);
@@ -382,37 +389,36 @@ function Network({ system, apiKey }) {
       {!system && <p className="hint">…</p>}
       {system && s.network && (
         <>
-          <p>
-            {internet
-              ? <>Connected to <b>{connectionName(internet)}</b>{internet.signal != null && <SignalLabel signal={internet.signal} />}</>
-              : <span className="bad">No internet connection</span>}
-          </p>
-          <WifiPreferred wifi={s.wifi} apiKey={apiKey} />
           <p className="hint">Open the webapp from another computer at:</p>
           <ul className="links">
             {links.map((l) => <li key={l}><a href={l}>{l}</a></li>)}
           </ul>
           <dl className="facts">
-            {s.network.map((iface) => (
-              <React.Fragment key={iface.name}>
-                <dt>{iface.name}</dt>
-                <dd>
-                  {(iface.type || iface.connection) && (
-                    <div>
-                      {connectionName(iface)}
-                      {iface.signal != null && <SignalLabel signal={iface.signal} />}
-                      {iface.internet && <span className="hint"> · internet goes through here{iface.gateway ? ` (router ${iface.gateway})` : ''}</span>}
-                    </div>
-                  )}
-                  {iface.addresses.map((a) => (
-                    <div key={a.address}>
-                      <code>{a.address}</code> <span className="hint">{a.family}{a.scope === 'link' ? ', link-local' : ''}</span>
-                    </div>
-                  ))}
-                </dd>
-              </React.Fragment>
-            ))}
+            {interfaceList(s).map((iface) => {
+              const status = interfaceStatus(iface, s.wifi);
+              return (
+                <React.Fragment key={iface.name}>
+                  <dt title={status.why}>
+                    <span className={`dot ${status.ok ? 'dot-ok' : 'dot-bad'}`} /> {iface.name}
+                  </dt>
+                  <dd>
+                    {(iface.type || iface.connection) && (
+                      <div>
+                        {connectionName(iface)}
+                        {iface.signal != null && <SignalLabel signal={iface.signal} />}
+                      </div>
+                    )}
+                    {iface.addresses.map((a) => (
+                      <div key={a.address}>
+                        <code>{a.address}</code> <span className="hint">{a.family}{a.scope === 'link' ? ', link-local' : ''}</span>
+                      </div>
+                    ))}
+                  </dd>
+                </React.Fragment>
+              );
+            })}
           </dl>
+          <WifiPreferred wifi={s.wifi} apiKey={apiKey} />
         </>
       )}
       {system && !s.network && <p className="hint">Network details are only available on Linux.</p>}

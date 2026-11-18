@@ -172,7 +172,6 @@
         if (disk && disk.free < 2e9) problems.push("disk");
         const nuc = `<dl class="facts">
           ${row("Host", sys.hostname && esc(sys.hostname))}
-          ${row("Code", sys.version && `<code>${esc(sys.version.short)}</code> ${esc(sys.version.subject)}`)}
           ${row("Up for", sys.uptime != null && `${dur(sys.uptime)} <span class="muted">· since ${esc(when(now - sys.uptime))}</span>`)}
           ${row("Clock", sys.clock_synced != null && (sys.clock_synced ? span("ok", "synced") : span("bad", "NOT synced")))}
           ${row("Temperature", temp != null && span(temp >= 85 ? "bad" : temp >= 75 ? "warn" : "", `${temp.toFixed(1)} °C`))}
@@ -230,22 +229,30 @@
           : `${i.type === "ethernet" ? "Ethernet" : (i.type || "connection")}${i.connection ? ` (${i.connection})` : ""}`;
         const signal = (i) => i.signal != null
           ? span(i.signal < 30 ? "bad" : i.signal < 55 ? "warn" : "ok", ` · signal ${i.signal}%`) : "";
-        const internet = (net || []).find((i) => i.internet);
         // the Wi-Fi the watchdog keeps the NUC on (set on the NUC's System page)
         const wf = sys.wifi;
+        // every interface with an address, plus the Wi-Fi adapter while it's disconnected (shown red)
+        const ifaces = [...(net || [])];
+        if (wf && wf.device && !ifaces.some((i) => i.name === wf.device)) {
+          ifaces.push({ name: wf.device, type: "wifi", addresses: [], down: true });
+        }
+        // green: connected (the Wi-Fi: on the preferred network, if one is set); the reason in the tooltip
+        const ifaceStatus = (i) => i.down ? [false, `not connected${wf.state ? ` (${wf.state})` : ""}`]
+          : i.type === "wifi" && wf && wf.preferred && !wf.on_preferred
+            ? [false, `on “${i.ssid || i.connection}”, not the preferred “${wf.preferred}”`]
+          : [true, i.internet ? "connected, internet goes through here" : "connected"];
         const wifiPreferred = !wf ? ""
-          : !wf.preferred ? `<p class="muted">No preferred Wi-Fi set.</p>`
-          : `<p>Preferred Wi-Fi <b>“${esc(wf.preferred)}”</b>: ${wf.on_preferred ? span("ok", "connected")
-              : span("bad", wf.ssid ? `on “${wf.ssid}” instead` : `not connected${wf.state ? ` (${wf.state})` : ""}`)}</p>`;
+          : `<p class="muted">${wf.preferred ? `Preferred Wi-Fi “${esc(wf.preferred)}”` : "No preferred Wi-Fi set"}</p>`;
         const network = !net ? `<p class="muted">Only available on Linux.</p>`
-          : `<p>${internet ? `Connected to <b>${esc(connName(internet))}</b>${signal(internet)}` : span("bad", "No internet connection")}</p>
-             ${wifiPreferred}
-             <dl class="facts">${net.map((iface) => row(iface.name,
-              ((iface.type || iface.connection)
-                ? `<div>${esc(connName(iface))}${signal(iface)}${iface.internet ? `<span class="muted"> · internet goes through here</span>` : ""}</div>` : "")
-              + (iface.addresses || []).map((a) =>
-                `<div><code>${esc(a.address)}</code> <span class="muted">${esc(a.family)}${a.scope === "link" ? ", link-local" : ""}</span></div>`
-              ).join(""))).join("")}</dl>`;
+          : `<dl class="facts">${ifaces.map((iface) => {
+              const [ok, why] = ifaceStatus(iface);
+              return `<dt title="${esc(why)}"><i class="legend-dot ${ok ? "legend-online" : "legend-offline"}"></i>${esc(iface.name)}</dt><dd>`
+                + ((iface.type || iface.connection) ? `<div>${esc(connName(iface))}${signal(iface)}</div>` : "")
+                + (iface.addresses || []).map((a) =>
+                  `<div><code>${esc(a.address)}</code> <span class="muted">${esc(a.family)}${a.scope === "link" ? ", link-local" : ""}</span></div>`
+                ).join("") + `</dd>`;
+            }).join("")}</dl>
+             ${wifiPreferred}`;
 
         // updates
         const u = sys.update || {};
