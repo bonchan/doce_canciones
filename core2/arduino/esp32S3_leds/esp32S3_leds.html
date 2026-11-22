@@ -1,0 +1,1298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>leds · doce canciones</title>
+<!--
+  Console for esp32S3_leds.ino. Open in Chrome or Edge (Web Serial).
+  If the browser refuses the camera or the serial port from file://, serve
+  this folder:  python -m http.server 8000  →  http://localhost:8000/esp32S3_leds.html
+
+  Coordinates: x, y in -1..1, origin = centre of the camera image,
+  +x to the right, +y up. LEDs and sensors share the same space.
+-->
+<style>
+:root{
+  --bg:#0c0b0a; --panel:#141210; --panel2:#1b1815; --line:#2b2723; --line2:#3a352f;
+  --text:#ece6dc; --muted:#9a9085; --dim:#6b635a;
+  --warm:#ffb36b; --warm2:#ffd9a8; --ok:#86d6a8; --bad:#ff8a7a; --info:#9cc7ff; --sensor:#8fd3ff;
+  --r:10px; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button,select,input{font:inherit;color:inherit}
+button{background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:6px 11px;cursor:pointer;transition:border-color .15s,background .15s}
+button:hover{border-color:var(--warm)}
+button:disabled{opacity:.4;cursor:default;border-color:var(--line2)}
+button.primary{background:#3a2a1a;border-color:#7a5530}
+button.on{background:#3a2a1a;border-color:var(--warm);color:var(--warm2)}
+button.danger:hover{border-color:var(--bad)}
+select,input[type=number],input[type=text]{background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:5px 8px}
+input[type=number]{width:72px}
+input[type=range]{accent-color:var(--warm);width:100%}
+input[type=checkbox]{accent-color:var(--warm)}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(12,11,10,.94);z-index:5}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.02em;margin-right:auto}
+.brand small{color:var(--muted);font-weight:400}
+.breath{width:12px;height:12px;border-radius:50%;background:var(--warm);box-shadow:0 0 14px var(--warm);animation:breathe 9s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1.1)}}
+@media (prefers-reduced-motion:reduce){.breath{animation:none}}
+.conn{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--dim)}
+.dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+main{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:16px;padding:16px;align-items:start}
+@media (max-width:1050px){main{grid-template-columns:minmax(0,1fr)}}
+.tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.tools .seg{display:flex;border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+.tools .seg label{padding:6px 12px;cursor:pointer;border-right:1px solid var(--line2);user-select:none}
+.tools .seg label:last-child{border-right:0}
+.tools .seg input{display:none}
+.tools .seg label:has(input:checked){background:#3a2a1a;color:var(--warm2)}
+.tools .sp{flex:1}
+#stage{position:relative;display:flex;justify-content:center;background:#050403;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;min-height:200px}
+#view{display:block;touch-action:none;cursor:crosshair}
+#hint{position:absolute;left:12px;bottom:10px;right:12px;color:var(--warm2);font-size:13px;pointer-events:none;text-shadow:0 1px 3px #000}
+#empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);pointer-events:none;text-align:center;padding:20px}
+#stats{margin-top:8px;color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+aside{display:flex;flex-direction:column;gap:10px}
+details{background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
+summary{padding:10px 14px;cursor:pointer;font-weight:600;list-style:none;display:flex;align-items:center;gap:8px}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"›";color:var(--dim);transition:transform .15s;display:inline-block}
+details[open] summary::before{transform:rotate(90deg)}
+summary .badge{margin-left:auto}
+.body{padding:2px 14px 14px;display:flex;flex-direction:column;gap:9px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row .grow{flex:1}
+.muted{color:var(--muted)}
+.small{font-size:12.5px}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+.badge{font-size:11.5px;padding:2px 8px;border-radius:99px;border:1px solid var(--line2);color:var(--muted);font-weight:400}
+.badge.warn{border-color:#7a5530;color:var(--warm2)}
+.chips{display:grid;grid-template-columns:repeat(8,1fr);gap:5px}
+.chip{font-size:11.5px;text-align:center;padding:4px 0;border-radius:6px;border:1px solid var(--line);color:var(--dim);cursor:default;font-variant-numeric:tabular-nums}
+.chip.cfg{cursor:pointer;color:var(--muted);border-color:var(--line2)}
+.chip.online{border-color:#3d6b52;color:var(--ok);background:#13201a}
+.chip.offline{border-color:#6b3b35;color:var(--bad);background:#21130f}
+.group{margin-top:6px;color:var(--warm);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.param{display:grid;grid-template-columns:64px 1fr 48px;gap:8px;align-items:center;font-size:13px}
+.param .pv{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+progress{width:100%;height:8px;accent-color:var(--warm)}
+.missed{display:flex;flex-wrap:wrap;gap:4px}
+.missed button{padding:1px 7px;font-size:12px}
+.srow{display:grid;grid-template-columns:28px 1fr auto;gap:6px 8px;align-items:center;padding:7px 0;border-top:1px solid var(--line)}
+.srow:first-child{border-top:0}
+.srow .sx{grid-column:2/4;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.srow b{color:var(--sensor)}
+.srow.down b{color:#fff;text-shadow:0 0 8px var(--sensor)}
+#log{height:180px;overflow:auto;background:#0a0908;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all}
+#log .tx{color:var(--warm2)} #log .ok{color:var(--ok)} #log .bad{color:var(--bad)} #log .info{color:var(--info)} #log .dev{color:var(--muted)}
+kbd{background:var(--panel2);border:1px solid var(--line2);border-radius:4px;padding:0 5px;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="breath"></span> leds <small>doce canciones</small></div>
+  <span id="devinfo" class="muted small"></span>
+  <div class="conn"><span id="connDot" class="dot"></span><span id="connText">not connected</span></div>
+  <select id="baud" title="only matters for USB-UART bridges; native USB ignores it">
+    <option>921600</option><option>460800</option><option>115200</option>
+  </select>
+  <button id="connectBtn" class="primary">Connect</button>
+</header>
+
+<main>
+  <section>
+    <div class="tools">
+      <div class="seg" role="radiogroup" aria-label="what a click does">
+        <label title="click = ripple, drag = paint ripples, press a sensor = hold it"><input type="radio" name="tool" value="touch" checked>Touch</label>
+        <label title="click where the lit LED is"><input type="radio" name="tool" value="led">Place LEDs</label>
+        <label title="click where the sensor is"><input type="radio" name="tool" value="sensor">Place sensor</label>
+      </div>
+      <span class="sp"></span>
+      <label class="small muted"><input type="checkbox" id="markers" checked> markers</label>
+      <label class="small muted" title="size of the glow in the mirror">glow <input type="range" id="glowSize" min="0.4" max="2.5" step="0.05" value="1" style="width:80px;vertical-align:middle"></label>
+    </div>
+    <div id="stage">
+      <canvas id="view"></canvas>
+      <div id="empty">Connect the device to see its LEDs here.<br>Start the camera to place them where they really are.</div>
+      <div id="hint"></div>
+    </div>
+    <div id="stats">—</div>
+  </section>
+
+  <aside>
+    <details open>
+      <summary>Device <span id="dirtyBadge" class="badge" hidden>unsaved</span></summary>
+      <div class="body">
+        <div class="row">
+          <span>Boards</span>
+          <input type="number" id="modulesIn" min="1" max="16" value="1">
+          <button id="modulesApply">Set</button>
+          <span class="grow"></span>
+          <select id="i2cSel" title="I2C clock">
+            <option value="100000">100 kHz</option><option value="400000">400 kHz</option>
+            <option value="800000">800 kHz</option><option value="1000000">1 MHz</option>
+          </select>
+        </div>
+        <div id="chips" class="chips"></div>
+        <div class="small muted">Click a board to make it blink. Address = 0x40 + number.</div>
+        <div class="row">
+          <button id="scanBtn">Scan bus</button>
+          <button id="saveBtn">Save on device</button>
+          <label class="small muted" title="save on the device a few seconds after any change"><input type="checkbox" id="autosave" checked> auto-save</label>
+        </div>
+        <div class="row">
+          <button id="reloadBtn">Reload from device</button>
+          <button id="factoryBtn" class="danger">Factory reset</button>
+        </div>
+      </div>
+    </details>
+
+    <details open>
+      <summary>Mode</summary>
+      <div class="body">
+        <div class="row">
+          <button class="modebtn" data-mode="live" title="breathing field + ripples">Live</button>
+          <button class="modebtn" data-mode="off">Off</button>
+          <button class="modebtn" data-mode="test" title="one LED per board running round, to check wiring">Test</button>
+          <button class="modebtn" data-mode="solid" title="everything at the 'solid' level">Solid</button>
+        </div>
+      </div>
+    </details>
+
+    <details>
+      <summary>Look</summary>
+      <div class="body" id="params"><span class="muted small">Connect to load the parameters.</span></div>
+    </details>
+
+    <details open>
+      <summary>Camera</summary>
+      <div class="body">
+        <div class="row">
+          <select id="camSel" class="grow"><option value="">default camera</option></select>
+          <button id="camBtn">Start</button>
+        </div>
+        <div class="row small">
+          <label><input type="checkbox" id="showCam" checked> show</label>
+          <span class="muted">dim</span><input type="range" id="camDim" min="0.05" max="1" step="0.05" value="0.55" style="width:90px">
+          <label title="best effort: not every camera lets the browser lock exposure"><input type="checkbox" id="lockExp"> lock exposure</label>
+        </div>
+      </div>
+    </details>
+
+    <details open>
+      <summary>Calibrate <span id="placedBadge" class="badge">0 / 0 placed</span></summary>
+      <div class="body">
+        <div class="small muted">Point the camera at the LEDs, darken the room, keep the camera still. Each LED lights alone and the camera finds it.</div>
+        <div class="row small">
+          <span>LEDs</span><input type="number" id="calFrom" min="0" value="0"><span>to</span><input type="number" id="calTo" min="0" value="15">
+          <label><input type="checkbox" id="calOnly"> only unplaced</label>
+        </div>
+        <div class="row small">
+          <span title="camera frames to wait after each LED changes">settle</span><input type="number" id="calSettle" min="1" max="30" value="5">
+          <span title="how much brighter (0-255) a spot must get to count">threshold</span><input type="number" id="calThresh" min="5" max="200" value="35">
+          <label title="new dark frame before every LED: slower, survives changing light"><input type="checkbox" id="calFresh"> careful</label>
+        </div>
+        <div class="row">
+          <button id="calBtn" class="primary">Auto-scan</button>
+          <span id="calText" class="small muted grow"></span>
+        </div>
+        <progress id="calProg" value="0" max="1" hidden></progress>
+        <div id="missedBox" hidden>
+          <div class="small muted">Not seen. Click one to place it by hand:</div>
+          <div id="missed" class="missed"></div>
+        </div>
+        <div class="group">by hand</div>
+        <div class="row small">
+          <button id="ledPrev" title="previous LED (←)">‹</button>
+          <span>LED</span><input type="number" id="ledIn" min="0" value="0">
+          <button id="ledNext" title="next LED (→)">›</button>
+          <span id="ledWhere" class="muted"></span>
+        </div>
+        <div class="row small">
+          <label><input type="checkbox" id="autoAdv" checked> next after click</label>
+          <button id="ledClear" title="forget this LED's position (Del)">Clear this</button>
+          <button id="clearAll" class="danger">Clear all</button>
+        </div>
+        <div class="small muted">In <b>Place LEDs</b>, only the chosen LED is on. Click where it is. Keys: <kbd>←</kbd> <kbd>→</kbd> choose, <kbd>Del</kbd> clear, <kbd>Esc</kbd> done.</div>
+      </div>
+    </details>
+
+    <details open>
+      <summary>Sensors <span id="sensorBadge" class="badge">0</span></summary>
+      <div class="body">
+        <div id="sensorList"></div>
+        <div class="row">
+          <button id="addSensor">Add sensor</button>
+          <span class="small muted">then click where it is</span>
+        </div>
+        <div class="small muted">pin −1 = virtual (fired from here). Real sensors: a GPIO, active low uses the internal pull-up (switch to GND).</div>
+      </div>
+    </details>
+
+    <details>
+      <summary>Layout file</summary>
+      <div class="body">
+        <div class="small muted">A backup of LED positions, sensors and look, as JSON.</div>
+        <div class="row">
+          <button id="exportBtn">Export</button>
+          <button id="importBtn">Import…</button>
+          <input type="file" id="importFile" accept=".json,application/json" hidden>
+        </div>
+      </div>
+    </details>
+
+    <details>
+      <summary>Console</summary>
+      <div class="body">
+        <div id="log"></div>
+        <div class="row">
+          <input type="text" id="cmdIn" class="grow" placeholder="command, e.g. help" autocomplete="off">
+          <label class="small muted" title="also show the page's own background traffic"><input type="checkbox" id="traffic"> all</label>
+        </div>
+      </div>
+    </details>
+  </aside>
+</main>
+
+<video id="video" playsinline muted style="position:absolute;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none"></video>
+
+<script>
+'use strict';
+
+// ── tiny helpers ─────────────────────────────────────────────────────────
+const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2), v);
+    else if (v === true) e.setAttribute(k, '');
+    else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const c of kids) e.append(c);
+  return e;
+}
+const f4 = v => (+v).toFixed(4);
+const fmt = v => Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2);
+const kv = line => Object.fromEntries(line.trim().split(/\s+/).slice(1).map(s => {
+  const i = s.indexOf('=');
+  return i < 0 ? [s, true] : [s.slice(0, i), s.slice(i + 1)];
+}));
+const ledName = i => `LED ${i} · board ${i >> 4} (0x${(0x40 + (i >> 4)).toString(16)}) ch ${i & 15}`;
+
+// ── state ────────────────────────────────────────────────────────────────
+const S = {
+  info: {}, status: {}, params: [],
+  modules: 1, pos: [], bright: new Uint8Array(256),
+  sensors: Array.from({ length: 16 }, () => ({ used: false, x: 0, y: 0, pin: -1, activeLow: true, down: false })),
+  tool: 'touch', curLed: 0, curSensor: -1, hover: -1,
+  aspect: 16 / 9, camOn: false, stream: null,
+  touches: [], detections: [], dirty: false,
+  scanning: false, stopScan: false, missed: [],
+};
+
+// ── log ──────────────────────────────────────────────────────────────────
+const logBox = $('#log');
+function log(msg, kind = '') {
+  logBox.append(el('div', { class: kind }, msg));
+  while (logBox.childElementCount > 400) logBox.firstChild.remove();
+  logBox.scrollTop = logBox.scrollHeight;
+}
+const QUIET = new Set(['status', 'ping', 'touch', 'set', 'pos', 'hold', 'calib', 'positions', 'params', 'sensors', 'stream', 'hello']);
+
+// ── serial link ──────────────────────────────────────────────────────────
+// One command in flight at a time. A command is done when "OK <word>" or
+// "ERR <word> ..." comes back; lines in between are its data. F / EV / LOG /
+// BOOT lines can arrive any time and are handled on their own.
+const enc = new TextEncoder();
+class Link {
+  constructor() { this.port = null; this.reader = null; this.writer = null; this.queue = []; this.cur = null; this.closing = false; }
+  get open() { return !!this.writer; }
+
+  async connect(baud) {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: baud, bufferSize: 65536 });
+    this.port = port;
+    this.closing = false;
+    this.writer = port.writable.getWriter();
+    this.loop = this.readLoop();
+  }
+
+  async readLoop() {
+    const dec = new TextDecoder();
+    let buf = '';
+    while (this.port && this.port.readable && !this.closing) {
+      this.reader = this.port.readable.getReader();
+      try {
+        for (;;) {
+          const { value, done } = await this.reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let k;
+          while ((k = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, k).replace(/\r$/, '');
+            buf = buf.slice(k + 1);
+            if (line) this.onLine(line);
+          }
+          if (buf.length > 65536) buf = '';
+        }
+      } catch (e) {
+        if (!this.closing) log('serial: ' + e.message, 'bad');
+      } finally {
+        try { this.reader.releaseLock(); } catch {}
+        this.reader = null;
+      }
+    }
+    await this.cleanup();
+  }
+
+  async cleanup() {
+    const wasOpen = !!this.writer;
+    try { this.writer?.releaseLock(); } catch {}
+    this.writer = null;
+    const pending = this.cur ? [this.cur, ...this.queue] : this.queue;
+    this.cur = null; this.queue = [];
+    for (const c of pending) { clearTimeout(c.timer); c.resolve({ ok: false, err: 'disconnected', lines: [] }); }
+    try { await this.port?.close(); } catch {}
+    this.port = null;
+    if (wasOpen) this.onClose();
+  }
+
+  async disconnect() {
+    this.closing = true;
+    try { await this.reader?.cancel(); } catch {}
+    await this.loop;
+  }
+
+  send(cmd, timeout = 3000, verbose = false) {
+    return new Promise(resolve => {
+      if (!this.writer) return resolve({ ok: false, err: 'not connected', lines: [] });
+      this.queue.push({ cmd, resolve, timeout, verbose, lines: [] });
+      this.pump();
+    });
+  }
+
+  pump() {
+    if (this.cur || !this.queue.length || !this.writer) return;
+    const c = this.cur = this.queue.shift();
+    c.word = c.cmd.trim().split(/\s+/)[0].toLowerCase();
+    c.timer = setTimeout(() => { log(`no answer to "${c.cmd}"`, 'bad'); this.finish({ ok: false, err: 'timeout', lines: c.lines }); }, c.timeout);
+    if (c.verbose || $('#traffic').checked || !QUIET.has(c.word)) log('› ' + c.cmd, 'tx');
+    this.writer.write(enc.encode(c.cmd + '\n')).catch(e => this.finish({ ok: false, err: e.message, lines: [] }));
+  }
+
+  finish(res) {
+    const c = this.cur;
+    if (!c) return;
+    clearTimeout(c.timer);
+    this.cur = null;
+    if (!res.ok && res.err !== 'timeout' && (c.verbose || !QUIET.has(c.word))) log(`${c.word}: ${res.err}`, 'bad');
+    c.resolve(res);
+    this.pump();
+  }
+
+  raw(text) { return this.writer ? this.writer.write(enc.encode(text)).catch(() => {}) : Promise.resolve(); }
+
+  onLine(line) {
+    if (line.startsWith('F ')) return onFrame(line);
+    if (line.startsWith('EV ')) return onEvent(line);
+    if (line.startsWith('LOG ')) return log(line.slice(4), 'dev');
+    if (line.startsWith('BOOT')) { log(line, 'info'); return onBoot(); }
+    const c = this.cur;
+    if (c) {
+      const m = /^(OK|ERR)\s+(\S+)\s*(.*)$/.exec(line);
+      if (m && (m[2].toLowerCase() === c.word || m[2] === '?')) {
+        return this.finish(m[1] === 'OK' ? { ok: true, lines: c.lines } : { ok: false, err: m[3] || 'error', lines: c.lines });
+      }
+      if (!m) { c.lines.push(line); return; }
+    }
+    log(line, 'dev');
+  }
+
+  onClose() {}
+}
+const link = new Link();
+
+// ── device sync ──────────────────────────────────────────────────────────
+let syncing = false;
+async function syncAll() {
+  if (syncing || !link.open) return;
+  syncing = true;
+  try {
+    let h = { ok: false };
+    for (let k = 0; k < 4 && link.open; k++) {
+      h = await link.send('hello', 1500);
+      if (h.ok) break;
+      await sleep(400);
+    }
+    if (!h.ok) { log('the device did not answer. Right port? Is esp32S3_leds.ino on it?', 'bad'); return; }
+    S.info = kv(h.lines.find(l => l.startsWith('HELLO')) || 'HELLO');
+    $('#devinfo').textContent = `${S.info.chip || ''} · ${S.info.name || ''} ${S.info.fw || ''}`;
+    await getParams();
+    await getStatus();
+    await getPositions();
+    await getSensors();
+    await link.send('stream on 15');
+    setConn(true);
+    log('in sync with the device', 'ok');
+  } finally { syncing = false; }
+}
+
+function onBoot() { if (link.open) setTimeout(syncAll, 300); }
+
+async function getParams() {
+  const r = await link.send('params');
+  if (!r.ok) return;
+  S.params = r.lines.filter(l => l.startsWith('PARAM ')).map(l => {
+    const p = l.split(' ');
+    return { name: p[1], value: +p[2], min: +p[3], max: +p[4], help: p.slice(5).join(' ') };
+  });
+  buildParams();
+  const a = S.params.find(p => p.name === 'aspect');
+  if (a && !S.camOn) setAspect(a.value, false);
+}
+
+async function getStatus() {
+  const r = await link.send('status', 2000);
+  if (!r.ok) return;
+  const line = r.lines.find(l => l.startsWith('STATUS'));
+  if (!line) return;
+  S.status = kv(line);
+  const m = +S.status.modules || 1;
+  if (m !== S.modules) { S.modules = m; await getPositions(); }
+  if (S.status.dirty === '1') S.dirty = true;
+  renderStatus();
+}
+
+async function getPositions() {
+  const r = await link.send('positions', 5000);
+  if (!r.ok) return;
+  const pos = [];
+  for (const l of r.lines) {
+    if (!l.startsWith('POS ')) continue;
+    const [, i, x, y, p] = l.split(' ');
+    pos[+i] = { x: +x, y: +y, placed: p === '1' };
+  }
+  S.pos = Array.from({ length: pos.length }, (_, i) => pos[i] || { x: 0, y: 0, placed: false });
+  S.modules = Math.max(1, Math.round(S.pos.length / 16));
+  $('#modulesIn').value = S.modules;
+  const n = S.pos.length;
+  $('#calFrom').max = $('#calTo').max = $('#ledIn').max = Math.max(0, n - 1);
+  if (+$('#calTo').value > n - 1 || +$('#calTo').value === 15) $('#calTo').value = Math.max(0, n - 1);
+  if (S.curLed > n - 1) selectLed(n - 1, false);
+  renderPlaced();
+}
+
+async function getSensors() {
+  const r = await link.send('sensors');
+  if (!r.ok) return;
+  for (const s of S.sensors) { s.used = false; s.down = false; }
+  for (const l of r.lines) {
+    if (!l.startsWith('SENSOR ')) continue;
+    const [, j, x, y, pin, act, down] = l.split(' ');
+    Object.assign(S.sensors[+j], { used: true, x: +x, y: +y, pin: +pin, activeLow: act !== 'high', down: down === '1' });
+  }
+  renderSensors();
+}
+
+function onFrame(line) {
+  const hex = line.slice(2);
+  const n = Math.min(256, hex.length >> 1);
+  for (let i = 0; i < n; i++) S.bright[i] = parseInt(hex.substr(i * 2, 2), 16);
+}
+
+function onEvent(line) {
+  const p = line.split(' ');
+  if (p[1] === 'sensor') {
+    const s = S.sensors[+p[2]];
+    if (s) { s.down = p[3] === '1'; if (s.down) s.flash = performance.now(); renderSensorStates(); }
+  } else if (p[1] === 'module') {
+    log(`board ${p[2]} ${p[3]}`, p[3] === 'online' ? 'ok' : 'bad');
+    const b = 1 << +p[2];
+    let mask = parseInt(S.status.online || '0', 16);
+    mask = p[3] === 'online' ? (mask | b) : (mask & ~b);
+    S.status.online = mask.toString(16);
+    renderStatus();
+  } else log(line, 'dev');
+}
+
+// ── saving ───────────────────────────────────────────────────────────────
+let saveTimer = null;
+function markDirty() {
+  S.dirty = true;
+  renderDirty();
+  if ($('#autosave').checked && !S.scanning) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => save(true), 4000);
+  }
+}
+async function save(quiet) {
+  clearTimeout(saveTimer);
+  if (!link.open) return;
+  const r = await link.send('save', 6000);
+  if (r.ok) { S.dirty = false; S.status.dirty = '0'; renderDirty(); if (!quiet) log('saved on the device', 'ok'); }
+}
+function renderDirty() { $('#dirtyBadge').hidden = !S.dirty; $('#dirtyBadge').className = 'badge warn'; }
+
+// ── UI: connection, status, boards ───────────────────────────────────────
+function setConn(on) {
+  $('#connDot').className = 'dot' + (on ? ' ok' : '');
+  $('#connText').textContent = on ? 'connected' : 'not connected';
+  $('#connectBtn').textContent = on ? 'Disconnect' : 'Connect';
+  $('#empty').hidden = on || S.camOn;
+  updateHint();
+}
+
+link.onClose = () => {
+  setConn(false);
+  S.bright.fill(0);
+  log('disconnected', 'info');
+};
+
+$('#connectBtn').onclick = async () => {
+  if (!('serial' in navigator)) { alert('Web Serial needs Chrome or Edge on a desktop computer.'); return; }
+  if (link.open) { await link.disconnect(); return; }
+  try {
+    await link.connect(+$('#baud').value);
+  } catch (e) {
+    if (e.name !== 'NotFoundError') log('could not open the port: ' + e.message, 'bad');
+    return;
+  }
+  log('port open', 'info');
+  $('#connText').textContent = 'talking…';
+  await link.raw('\n');
+  await sleep(200);
+  await syncAll();
+};
+
+function renderStatus() {
+  const st = S.status;
+  const online = parseInt(st.online || '0', 16);
+  const chips = $('#chips');
+  chips.textContent = '';
+  for (let m = 0; m < 16; m++) {
+    const cfg = m < S.modules;
+    const cls = 'chip' + (cfg ? ' cfg ' + ((online >> m) & 1 ? 'online' : 'offline') : '');
+    const c = el('div', { class: cls, title: cfg ? `board ${m} · 0x${(0x40 + m).toString(16)} · click to blink` : 'not in use' }, String(m));
+    if (cfg) c.onclick = () => link.send(`ident ${m}`);
+    chips.append(c);
+  }
+  document.querySelectorAll('.modebtn').forEach(b => b.classList.toggle('on', b.dataset.mode === st.mode));
+  if (st.i2c) $('#i2cSel').value = st.i2c;
+  let up = 0;
+  for (let m = 0; m < S.modules; m++) up += (online >> m) & 1;
+  const placed = S.pos.filter(p => p.placed).length;
+  $('#stats').textContent = st.mode
+    ? `mode ${st.mode} · boards ${up}/${S.modules} answering · ${st.fps} fps · power ${(100 * +st.duty).toFixed(0)}% of max · ripples ${st.ripples} · stirred ${(100 * +st.excite).toFixed(0)}% · placed ${placed}/${S.pos.length}`
+    : '—';
+  renderDirty();
+}
+
+$('#modulesApply').onclick = async () => {
+  const n = clamp(Math.round(+$('#modulesIn').value || 1), 1, 16);
+  const r = await link.send(`modules ${n}`);
+  if (r.ok) { S.modules = n; await getPositions(); await getStatus(); log(`${n} board${n > 1 ? 's' : ''} → ${n * 16} LEDs`, 'ok'); }
+};
+$('#i2cSel').onchange = () => link.send(`i2c ${$('#i2cSel').value}`, 3000, true);
+$('#scanBtn').onclick = async () => {
+  const r = await link.send('scan', 3000, true);
+  const line = r.lines.find(l => l.startsWith('SCAN'));
+  if (!line) return;
+  const found = line.split(' ').slice(1);
+  log(found.length ? 'on the bus: ' + found.map(a => '0x' + a).join(' ') : 'nothing answers on the bus. Check SDA/SCL, 3.3V on VCC, GND.', found.length ? 'ok' : 'bad');
+};
+$('#saveBtn').onclick = () => save(false);
+$('#reloadBtn').onclick = async () => { await link.send('load', 4000, true); await syncAll(); };
+$('#factoryBtn').onclick = async () => {
+  if (!confirm('Forget every LED position, sensor and look setting on the device?')) return;
+  await link.send('factory', 4000, true);
+  await syncAll();
+};
+document.querySelectorAll('.modebtn').forEach(b => b.onclick = async () => {
+  await link.send(`mode ${b.dataset.mode}`, 3000, true);
+  getStatus();
+});
+
+// ── UI: look parameters ──────────────────────────────────────────────────
+const GROUPS = [
+  ['output', ['master', 'limit', 'gamma', 'fps', 'aspect']],
+  ['breathing', ['idle', 'breath', 'depth', 'drift', 'sway', 'twinkle', 'wake', 'calm']],
+  ['ripples', ['speed', 'width', 'life', 'amp', 'trail', 'collide', 'hold']],
+];
+function buildParams() {
+  const box = $('#params');
+  box.textContent = '';
+  const used = new Set();
+  const group = (title, names) => {
+    const ps = names.map(n => S.params.find(p => p.name === n)).filter(Boolean);
+    if (!ps.length) return;
+    box.append(el('div', { class: 'group' }, title));
+    for (const p of ps) { used.add(p.name); box.append(paramRow(p)); }
+  };
+  for (const [t, n] of GROUPS) group(t, n);
+  group('other', S.params.filter(p => !used.has(p.name)).map(p => p.name));
+  box.append(el('div', { class: 'small muted' }, 'Hover a name for what it does.'));
+}
+function paramRow(p) {
+  const span = p.max - p.min;
+  const step = span <= 1.5 ? 0.01 : span <= 5 ? 0.02 : span <= 20 ? 0.1 : 0.5;
+  const out = el('span', { class: 'pv' }, fmt(p.value));
+  const r = el('input', { type: 'range', min: p.min, max: p.max, step, value: p.value });
+  r.addEventListener('input', () => {
+    p.value = +r.value;
+    out.textContent = fmt(p.value);
+    sendParam(p);
+    if (p.name === 'aspect' && !S.camOn) setAspect(p.value, false);
+  });
+  p.input = r; p.out = out;
+  return el('label', { class: 'param', title: p.help }, el('span', {}, p.name), r, out);
+}
+const pendingParams = new Map();
+function sendParam(p) {
+  if (pendingParams.has(p.name)) return;
+  pendingParams.set(p.name, true);
+  setTimeout(async () => {
+    pendingParams.delete(p.name);
+    const r = await link.send(`set ${p.name} ${+p.value.toFixed(5)}`);
+    if (r.ok) markDirty();
+  }, 60);
+}
+function setParamLocal(name, v) {
+  const p = S.params.find(q => q.name === name);
+  if (!p) return;
+  p.value = v;
+  if (p.input) { p.input.value = v; p.out.textContent = fmt(v); }
+}
+
+// ── stage: canvas, mapping ───────────────────────────────────────────────
+const cv = $('#view'), ctx = cv.getContext('2d');
+const video = $('#video');
+let dpr = window.devicePixelRatio || 1;
+
+function fit() {
+  const box = $('#stage').getBoundingClientRect();
+  const maxW = box.width;
+  const maxH = Math.max(240, window.innerHeight - Math.max(60, box.top) - 60);
+  let w = maxW, h = w / S.aspect;
+  if (h > maxH) { h = maxH; w = h * S.aspect; }
+  dpr = window.devicePixelRatio || 1;
+  cv.style.width = w + 'px';
+  cv.style.height = h + 'px';
+  cv.width = Math.max(1, Math.round(w * dpr));
+  cv.height = Math.max(1, Math.round(h * dpr));
+}
+new ResizeObserver(fit).observe($('#stage'));
+window.addEventListener('resize', fit);
+
+function setAspect(a, tellDevice) {
+  if (!(a > 0.2 && a < 5)) return;
+  S.aspect = a;
+  fit();
+  const p = S.params.find(q => q.name === 'aspect');
+  if (tellDevice && link.open && p && Math.abs(p.value - a) > 0.005) {
+    setParamLocal('aspect', +a.toFixed(4));
+    link.send(`set aspect ${a.toFixed(4)}`).then(r => r.ok && markDirty());
+    log(`ripples now round for a ${a.toFixed(2)}:1 camera`, 'info');
+  }
+}
+
+const toPx = (x, y) => [(x + 1) / 2 * cv.width, (1 - y) / 2 * cv.height];
+function fromEvent(e) {
+  const r = cv.getBoundingClientRect();
+  const u = (e.clientX - r.left) / r.width, v = (e.clientY - r.top) / r.height;
+  return [clamp(u * 2 - 1, -1, 1), clamp(1 - v * 2, -1, 1)];
+}
+function nearest(list, e, maxCss) {
+  const r = cv.getBoundingClientRect();
+  const ex = (e.clientX - r.left) * dpr, ey = (e.clientY - r.top) * dpr;
+  let best = -1, bd = (maxCss * dpr) ** 2;
+  list.forEach((p, i) => {
+    if (!p) return;
+    const [x, y] = toPx(p.x, p.y);
+    const d = (x - ex) ** 2 + (y - ey) ** 2;
+    if (d < bd) { bd = d; best = i; }
+  });
+  return best;
+}
+const usedSensors = () => S.sensors.map(s => s.used ? s : null);
+
+// warm glow sprite, drawn additively so overlapping light adds up
+const glow = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,240,215,1)');
+  gr.addColorStop(0.12, 'rgba(255,196,120,0.9)');
+  gr.addColorStop(0.4, 'rgba(255,140,60,0.28)');
+  gr.addColorStop(1, 'rgba(255,110,40,0)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 128, 128);
+  return c;
+})();
+
+function draw() {
+  const W = cv.width, H = cv.height, now = performance.now();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#050403';
+  ctx.fillRect(0, 0, W, H);
+  if (S.camOn && $('#showCam').checked && video.readyState >= 2) {
+    ctx.globalAlpha = +$('#camDim').value;
+    ctx.drawImage(video, 0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+  ctx.strokeStyle = 'rgba(255,220,180,0.07)';
+  ctx.lineWidth = dpr;
+  ctx.beginPath();
+  ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H);
+  ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2);
+  ctx.stroke();
+
+  // the mirror: what every LED is doing right now
+  const n = S.pos.length;
+  const R = Math.min(W, H) * 0.05 * +$('#glowSize').value;
+  if (link.open) {
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < n; i++) {
+      const b = S.bright[i] / 255;
+      if (b < 0.008) continue;
+      const [x, y] = toPx(S.pos[i].x, S.pos[i].y);
+      const r = R * (0.5 + 0.7 * Math.sqrt(b));
+      ctx.globalAlpha = Math.min(1, 0.15 + b);
+      ctx.drawImage(glow, x - r, y - r, 2 * r, 2 * r);
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // where the LEDs are
+  if ($('#markers').checked) {
+    for (let i = 0; i < n; i++) {
+      const p = S.pos[i];
+      const [x, y] = toPx(p.x, p.y);
+      if (p.placed) {
+        ctx.fillStyle = 'rgba(255,214,170,0.6)';
+        ctx.beginPath(); ctx.arc(x, y, 1.8 * dpr, 0, 7); ctx.fill();
+      } else {
+        ctx.strokeStyle = 'rgba(255,214,170,0.22)';
+        ctx.lineWidth = dpr;
+        ctx.strokeRect(x - 2.5 * dpr, y - 2.5 * dpr, 5 * dpr, 5 * dpr);
+      }
+    }
+  }
+
+  ctx.font = `${12 * dpr}px system-ui, sans-serif`;
+  ctx.textBaseline = 'middle';
+  const label = (txt, x, y, color) => {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    const w = ctx.measureText(txt).width;
+    const lx = clamp(x + 10 * dpr, 2, W - w - 10 * dpr);
+    ctx.fillRect(lx - 4 * dpr, y - 9 * dpr, w + 8 * dpr, 18 * dpr);
+    ctx.fillStyle = color;
+    ctx.fillText(txt, lx, y);
+  };
+
+  // the LED being placed by hand
+  if (S.tool === 'led' && S.pos[S.curLed]) {
+    const p = S.pos[S.curLed];
+    const [x, y] = toPx(p.x, p.y);
+    const pulse = 0.5 + 0.5 * Math.sin(now / 180);
+    ctx.strokeStyle = `rgba(255,190,110,${0.4 + 0.5 * pulse})`;
+    ctx.lineWidth = 2 * dpr;
+    ctx.setLineDash(p.placed ? [] : [4 * dpr, 4 * dpr]);
+    ctx.beginPath(); ctx.arc(x, y, (9 + 3 * pulse) * dpr, 0, 7); ctx.stroke();
+    ctx.setLineDash([]);
+    label(`LED ${S.curLed}${p.placed ? '' : ' · not placed yet'}`, x, y, '#ffd9a8');
+  }
+
+  // fresh camera detections
+  S.detections = S.detections.filter(d => now - d.t < 1800);
+  for (const d of S.detections) {
+    const [x, y] = toPx(d.x, d.y);
+    const a = 1 - (now - d.t) / 1800;
+    ctx.strokeStyle = `rgba(134,214,168,${a})`;
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(x - 12 * dpr, y); ctx.lineTo(x + 12 * dpr, y);
+    ctx.moveTo(x, y - 12 * dpr); ctx.lineTo(x, y + 12 * dpr);
+    ctx.stroke();
+  }
+
+  // sensors
+  S.sensors.forEach((s, j) => {
+    if (!s.used) return;
+    const [x, y] = toPx(s.x, s.y);
+    const age = s.flash ? now - s.flash : 1e9;
+    if (age < 900) {
+      ctx.strokeStyle = `rgba(143,211,255,${1 - age / 900})`;
+      ctx.lineWidth = 2 * dpr;
+      ctx.beginPath(); ctx.arc(x, y, (12 + age / 25) * dpr, 0, 7); ctx.stroke();
+    }
+    ctx.strokeStyle = (S.tool === 'sensor' && S.curSensor === j) ? '#ffd9a8' : '#8fd3ff';
+    ctx.lineWidth = 2 * dpr;
+    ctx.fillStyle = s.down ? 'rgba(143,211,255,0.55)' : 'rgba(143,211,255,0.12)';
+    ctx.beginPath(); ctx.arc(x, y, 11 * dpr, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#dff3ff';
+    ctx.textAlign = 'center';
+    ctx.fillText('S' + j, x, y);
+    ctx.textAlign = 'left';
+  });
+
+  // local feedback for clicks
+  S.touches = S.touches.filter(t => now - t.t < 700);
+  for (const t of S.touches) {
+    const [x, y] = toPx(t.x, t.y);
+    const a = 1 - (now - t.t) / 700;
+    ctx.strokeStyle = `rgba(255,217,168,${0.6 * a})`;
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath(); ctx.arc(x, y, (6 + (now - t.t) / 14) * dpr, 0, 7); ctx.stroke();
+  }
+
+  if (S.hover >= 0 && S.pos[S.hover] && !(S.tool === 'led' && S.hover === S.curLed)) {
+    const p = S.pos[S.hover];
+    const [x, y] = toPx(p.x, p.y);
+    label(`${ledName(S.hover)} · ${Math.round(S.bright[S.hover] / 2.55)}%`, x, y, '#ece6dc');
+  }
+
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+// ── stage: tools ─────────────────────────────────────────────────────────
+async function setTool(t) {
+  const prev = S.tool;
+  if (t === 'sensor' && S.curSensor < 0) {
+    const j = S.sensors.findIndex(s => !s.used);
+    if (j < 0) { alert('All 16 sensors are in use.'); t = prev; }
+    else S.curSensor = j;
+  }
+  S.tool = t;
+  document.querySelectorAll('[name=tool]').forEach(r => { r.checked = r.value === t; });
+  updateHint();
+  if (prev === 'led' && t !== 'led') await link.send('calib off');
+  if (t === 'led' && prev !== 'led') await link.send(`calib ${S.curLed}`);
+}
+document.querySelectorAll('[name=tool]').forEach(r => r.onchange = () => setTool(r.value));
+
+function updateHint() {
+  const h = $('#hint');
+  if (S.tool === 'led') h.textContent = `Click where ${ledName(S.curLed)} is lit · ← → choose · Del clears · Esc done`;
+  else if (S.tool === 'sensor') h.textContent = `Click where sensor S${S.curSensor} is · Esc when done`;
+  else h.textContent = link.open ? 'Click for a ripple · drag to paint · press and hold a sensor' : '';
+}
+
+function selectLed(i, light = true) {
+  const n = S.pos.length;
+  if (!n) return;
+  S.curLed = clamp(i | 0, 0, n - 1);
+  $('#ledIn').value = S.curLed;
+  const p = S.pos[S.curLed];
+  $('#ledWhere').textContent = p && p.placed ? `at ${p.x.toFixed(2)}, ${p.y.toFixed(2)}` : 'not placed';
+  updateHint();
+  if (light && S.tool === 'led') link.send(`calib ${S.curLed}`);
+}
+
+async function placeLed(i, x, y) {
+  S.pos[i] = { x, y, placed: true };
+  S.touches.push({ x, y, t: performance.now() });
+  const r = await link.send(`pos ${i} ${f4(x)} ${f4(y)}`);
+  if (r.ok) markDirty();
+  renderPlaced();
+  if ($('#autoAdv').checked && i + 1 < S.pos.length) selectLed(i + 1);
+  else selectLed(i, false);
+}
+
+async function clearLed(i) {
+  const r = await link.send(`pos ${i} clear`);
+  if (r.ok) { await getPositions(); markDirty(); selectLed(i, false); }
+}
+
+function placeSensor(j, x, y) {
+  const s = S.sensors[j];
+  Object.assign(s, { used: true, x, y });
+  sendSensor(j);
+  renderSensors();
+}
+
+function touch(x, y) {
+  S.touches.push({ x, y, t: performance.now() });
+  link.send(`touch ${f4(x)} ${f4(y)}`);
+}
+
+let held = -1, painting = false, lastPaint = 0;
+cv.addEventListener('pointerdown', e => {
+  if (!link.open) return;
+  const [x, y] = fromEvent(e);
+  if (S.tool === 'touch') {
+    const j = nearest(usedSensors(), e, 16);
+    cv.setPointerCapture(e.pointerId);
+    if (j >= 0) {
+      held = j;
+      link.send(`hold ${j} 1`);
+      return;
+    }
+    painting = true;
+    lastPaint = performance.now();
+    touch(x, y);
+  } else if (S.tool === 'led') {
+    placeLed(S.curLed, x, y);
+  } else if (S.tool === 'sensor' && S.curSensor >= 0) {
+    placeSensor(S.curSensor, x, y);
+  }
+});
+cv.addEventListener('pointermove', e => {
+  if (painting) {
+    const now = performance.now();
+    if (now - lastPaint > 140) { lastPaint = now; const [x, y] = fromEvent(e); touch(x, y); }
+  }
+  S.hover = nearest(S.pos, e, 10);
+});
+const release = () => {
+  if (held >= 0) { link.send(`hold ${held} 0`); held = -1; }
+  painting = false;
+};
+cv.addEventListener('pointerup', release);
+cv.addEventListener('pointercancel', release);
+cv.addEventListener('pointerleave', () => { S.hover = -1; });
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, select, textarea')) return;
+  if (S.tool === 'led') {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { selectLed(S.curLed + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { selectLed(S.curLed - 1); e.preventDefault(); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') { clearLed(S.curLed); e.preventDefault(); }
+    else if (e.key === 'Escape') setTool('touch');
+  } else if (S.tool === 'sensor' && e.key === 'Escape') setTool('touch');
+});
+
+// ── calibration by hand ──────────────────────────────────────────────────
+$('#ledIn').onchange = () => selectLed(+$('#ledIn').value);
+$('#ledPrev').onclick = () => selectLed(S.curLed - 1);
+$('#ledNext').onclick = () => selectLed(S.curLed + 1);
+$('#ledClear').onclick = () => clearLed(S.curLed);
+$('#clearAll').onclick = async () => {
+  if (!confirm('Forget every LED position?')) return;
+  const r = await link.send('posclear', 3000, true);
+  if (r.ok) { await getPositions(); markDirty(); }
+};
+function renderPlaced() {
+  const n = S.pos.length, p = S.pos.filter(q => q.placed).length;
+  $('#placedBadge').textContent = `${p} / ${n} placed`;
+  $('#placedBadge').className = 'badge' + (n && p < n ? ' warn' : '');
+  selectLedLabel();
+}
+function selectLedLabel() {
+  const p = S.pos[S.curLed];
+  $('#ledWhere').textContent = p && p.placed ? `at ${p.x.toFixed(2)}, ${p.y.toFixed(2)}` : 'not placed';
+}
+
+// ── camera ───────────────────────────────────────────────────────────────
+async function listCams() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  const sel = $('#camSel'), cur = sel.value;
+  sel.textContent = '';
+  sel.append(el('option', { value: '' }, 'default camera'));
+  devs.forEach((d, k) => sel.append(el('option', { value: d.deviceId }, d.label || `camera ${k + 1}`)));
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+
+async function startCam() {
+  stopCam();
+  const id = $('#camSel').value;
+  const video_ = { width: { ideal: 1280 }, height: { ideal: 720 } };
+  if (id) video_.deviceId = { exact: id };
+  try {
+    S.stream = await navigator.mediaDevices.getUserMedia({ video: video_, audio: false });
+  } catch (e) {
+    log('camera: ' + e.message, 'bad');
+    return;
+  }
+  video.srcObject = S.stream;
+  await video.play().catch(() => {});
+  if (!video.videoWidth) await new Promise(r => video.addEventListener('loadedmetadata', r, { once: true }));
+  S.camOn = true;
+  $('#camBtn').textContent = 'Stop';
+  $('#empty').hidden = true;
+  await listCams();
+  const set = S.stream.getVideoTracks()[0].getSettings();
+  log(`camera ${video.videoWidth}×${video.videoHeight}${set.frameRate ? ' @ ' + Math.round(set.frameRate) + ' fps' : ''}`, 'info');
+  setAspect(video.videoWidth / video.videoHeight, true);
+  if ($('#lockExp').checked) lockExposure(true);
+}
+function stopCam() {
+  if (S.stream) S.stream.getTracks().forEach(t => t.stop());
+  S.stream = null;
+  S.camOn = false;
+  video.srcObject = null;
+  $('#camBtn').textContent = 'Start';
+  $('#empty').hidden = link.open;
+}
+async function lockExposure(on) {
+  const tr = S.stream?.getVideoTracks()[0];
+  if (!tr || !tr.getCapabilities) return;
+  const caps = tr.getCapabilities();
+  const adv = {};
+  for (const k of ['exposureMode', 'whiteBalanceMode', 'focusMode']) {
+    if (!caps[k]) continue;
+    if (on && caps[k].includes('manual')) adv[k] = 'manual';
+    else if (!on && caps[k].includes('continuous')) adv[k] = 'continuous';
+  }
+  if (!Object.keys(adv).length) { if (on) log('this camera does not let the page lock exposure; dim the room instead', 'info'); return; }
+  try { await tr.applyConstraints({ advanced: [adv] }); log(on ? 'exposure locked' : 'exposure automatic', 'info'); }
+  catch (e) { log('exposure: ' + e.message, 'bad'); }
+}
+$('#camBtn').onclick = () => S.camOn ? stopCam() : startCam();
+$('#camSel').onchange = () => { if (S.camOn) startCam(); };
+$('#lockExp').onchange = () => lockExposure($('#lockExp').checked);
+
+// Waits for `n` new camera frames (or a fallback time if the browser can't tell).
+function frames(n) {
+  return new Promise(res => {
+    let k = 0, done = false;
+    const end = () => { if (!done) { done = true; res(); } };
+    const hard = setTimeout(end, n * 90 + 250);
+    if (!video.requestVideoFrameCallback) { clearTimeout(hard); setTimeout(end, n * 40); return; }
+    const step = () => { if (++k >= n) { clearTimeout(hard); end(); } else video.requestVideoFrameCallback(step); };
+    video.requestVideoFrameCallback(step);
+  });
+}
+
+// ── auto calibration ─────────────────────────────────────────────────────
+// Grab a small luminance copy of the camera image. 320 px wide is plenty
+// to find a lit LED and fast enough to do hundreds of times.
+const grabber = (() => {
+  const c = document.createElement('canvas');
+  const g = c.getContext('2d', { willReadFrequently: true });
+  return () => {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const w = 320, h = Math.max(1, Math.round(320 * vh / vw));
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    g.drawImage(video, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data;
+    const L = new Float32Array(w * h);
+    for (let i = 0, j = 0; i < L.length; i++, j += 4) L[i] = 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2];
+    return { L, w, h };
+  };
+})();
+
+// Where did it get brighter? Lit minus dark, a 3×3 blur against sensor
+// noise, the brightest spot, then a weighted centroid of the glow around it
+// (so a big blurry LED still lands on its middle). Null if nothing stands out.
+function detect(lit, dark, minDiff) {
+  const { w, h } = lit;
+  const D = new Float32Array(w * h);
+  for (let i = 0; i < D.length; i++) D[i] = Math.max(0, lit.L[i] - dark.L[i]);
+  const B = new Float32Array(w * h);
+  let max = 0, mi = -1;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const v = (D[i - w - 1] + D[i - w] + D[i - w + 1] + D[i - 1] + D[i] + D[i + 1] + D[i + w - 1] + D[i + w] + D[i + w + 1]) / 9;
+      B[i] = v;
+      if (v > max) { max = v; mi = i; }
+    }
+  }
+  if (mi < 0 || max < minDiff) return null;
+  const mx = mi % w, my = (mi / w) | 0;
+  const R = Math.max(4, Math.round(w * 0.06));
+  const cut = max * 0.5;
+  let sx = 0, sy = 0, sw = 0, count = 0;
+  for (let y = Math.max(0, my - R); y <= Math.min(h - 1, my + R); y++) {
+    for (let x = Math.max(0, mx - R); x <= Math.min(w - 1, mx + R); x++) {
+      const v = B[y * w + x];
+      if (v > cut) { const k = v - cut; sx += x * k; sy += y * k; sw += k; count++; }
+    }
+  }
+  if (count < 2 || sw <= 0) return null;
+  const u = (sx / sw + 0.5) / w, v = (sy / sw + 0.5) / h;
+  return { x: clamp(u * 2 - 1, -1, 1), y: clamp(1 - v * 2, -1, 1), strength: max, size: count };
+}
+
+async function autoScan() {
+  if (S.scanning) { S.stopScan = true; return; }
+  if (!link.open) { alert('Connect the device first.'); return; }
+  if (!S.camOn) { await startCam(); if (!S.camOn) return; }
+  const n = S.pos.length;
+  const from = clamp(+$('#calFrom').value | 0, 0, n - 1), to = clamp(+$('#calTo').value | 0, from, n - 1);
+  const only = $('#calOnly').checked, fresh = $('#calFresh').checked;
+  const settle = clamp(+$('#calSettle').value | 0, 1, 30), minDiff = clamp(+$('#calThresh').value, 5, 200);
+  const list = [];
+  for (let i = from; i <= to; i++) if (!only || !S.pos[i].placed) list.push(i);
+  if (!list.length) { log('nothing to scan in that range', 'info'); return; }
+
+  if (S.tool !== 'touch') await setTool('touch');
+  S.scanning = true; S.stopScan = false; S.missed = [];
+  clearTimeout(saveTimer);
+  $('#calBtn').textContent = 'Stop';
+  const prog = $('#calProg');
+  prog.hidden = false; prog.max = list.length; prog.value = 0;
+  let found = 0, dark = null, sinceDark = 99;
+  const t0 = performance.now();
+  try {
+    for (let k = 0; k < list.length; k++) {
+      if (S.stopScan || !link.open || !S.camOn) break;
+      const i = list[k];
+      if (fresh || sinceDark >= 8) {
+        await link.send('calib -1');
+        await frames(settle);
+        dark = grabber();
+        sinceDark = 0;
+      }
+      const r = await link.send(`calib ${i}`);
+      if (!r.ok) { S.missed.push(i); continue; }
+      await frames(settle);
+      const lit = grabber();
+      sinceDark++;
+      const d = detect(lit, dark, minDiff);
+      if (d) {
+        S.pos[i] = { x: d.x, y: d.y, placed: true };
+        S.detections.push({ x: d.x, y: d.y, t: performance.now() });
+        await link.send(`pos ${i} ${f4(d.x)} ${f4(d.y)}`);
+        found++;
+      } else {
+        S.missed.push(i);
+      }
+      prog.value = k + 1;
+      const left = (performance.now() - t0) / (k + 1) * (list.length - k - 1) / 1000;
+      $('#calText').textContent = `LED ${i} · found ${found} · missed ${S.missed.length} · ~${Math.ceil(left)} s left`;
+    }
+  } finally {
+    await link.send('calib off');
+    S.scanning = false;
+    $('#calBtn').textContent = 'Auto-scan';
+    prog.hidden = true;
+    $('#calText').textContent = `${S.stopScan ? 'stopped' : 'done'} · found ${found} · missed ${S.missed.length}`;
+    renderMissed();
+    renderPlaced();
+    if (found) { S.dirty = true; await save(true); log(`calibration: ${found} LEDs placed and saved`, 'ok'); }
+  }
+}
+$('#calBtn').onclick = autoScan;
+
+function renderMissed() {
+  const box = $('#missed');
+  box.textContent = '';
+  $('#missedBox').hidden = !S.missed.length;
+  for (const i of S.missed) {
+    box.append(el('button', { title: ledName(i), onclick: async () => { await setTool('led'); selectLed(i); } }, String(i)));
+  }
+}
+
+// ── sensors ──────────────────────────────────────────────────────────────
+function sendSensor(j) {
+  const s = S.sensors[j];
+  link.send(`sensor ${j} ${f4(s.x)} ${f4(s.y)} ${s.pin} ${s.activeLow ? 'low' : 'high'}`).then(r => {
+    if (r.ok) markDirty();
+    else { log(`sensor S${j}: ${r.err}`, 'bad'); getSensors(); }
+  });
+}
+function renderSensors() {
+  const box = $('#sensorList');
+  box.textContent = '';
+  let count = 0;
+  S.sensors.forEach((s, j) => {
+    if (!s.used) return;
+    count++;
+    const pin = el('input', { type: 'number', min: -1, max: 48, value: s.pin, style: 'width:58px' });
+    pin.onchange = () => { s.pin = Math.round(+pin.value); sendSensor(j); };
+    const low = el('input', { type: 'checkbox', checked: s.activeLow });
+    low.onchange = () => { s.activeLow = low.checked; sendSensor(j); };
+    const row = el('div', { class: 'srow' + (s.down ? ' down' : ''), id: 'srow' + j },
+      el('b', {}, 'S' + j),
+      el('span', { class: 'mono muted' }, `${s.x.toFixed(2)}, ${s.y.toFixed(2)}`),
+      el('span', { class: 'row' },
+        el('button', { title: 'one ripple from here', onclick: () => link.send(`trig ${j}`) }, 'Fire'),
+        el('button', { title: 'click a new spot for it', onclick: () => { S.curSensor = j; setTool('sensor'); } }, 'Move'),
+        el('button', { class: 'danger', title: 'remove', onclick: () => removeSensor(j) }, '×')),
+      el('span', { class: 'sx small muted' },
+        el('label', {}, 'pin ', pin),
+        el('label', {}, low, ' active low')));
+    box.append(row);
+  });
+  if (!count) box.append(el('div', { class: 'small muted' }, 'No sensors yet.'));
+  $('#sensorBadge').textContent = String(count);
+}
+function renderSensorStates() {
+  S.sensors.forEach((s, j) => { const r = document.getElementById('srow' + j); if (r) r.classList.toggle('down', s.down); });
+}
+async function removeSensor(j) {
+  const r = await link.send(`sensor ${j} clear`);
+  if (r.ok) { S.sensors[j].used = false; if (S.curSensor === j) S.curSensor = -1; renderSensors(); markDirty(); }
+}
+$('#addSensor').onclick = () => {
+  if (!link.open) return;
+  const j = S.sensors.findIndex(s => !s.used);
+  if (j < 0) { alert('All 16 sensors are in use.'); return; }
+  S.curSensor = j;
+  setTool('sensor');
+};
+
+// ── layout file ──────────────────────────────────────────────────────────
+$('#exportBtn').onclick = () => {
+  const data = {
+    kind: 'doce-canciones-leds-layout', version: 1, saved: new Date().toISOString(),
+    modules: S.modules, aspect: S.aspect,
+    leds: S.pos.map((p, i) => p.placed ? [i, +f4(p.x), +f4(p.y)] : null).filter(Boolean),
+    sensors: S.sensors.map((s, i) => s.used ? { i, x: +f4(s.x), y: +f4(s.y), pin: s.pin, activeLow: s.activeLow } : null).filter(Boolean),
+    params: Object.fromEntries(S.params.map(p => [p.name, p.value])),
+  };
+  const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' })), download: `leds-layout-${S.modules}boards.json` });
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+};
+$('#importBtn').onclick = () => $('#importFile').click();
+$('#importFile').onchange = async () => {
+  const f = $('#importFile').files[0];
+  $('#importFile').value = '';
+  if (!f || !link.open) return;
+  let data;
+  try { data = JSON.parse(await f.text()); } catch { alert('That is not a JSON file.'); return; }
+  if (data.kind !== 'doce-canciones-leds-layout') { alert('That is not a leds layout file.'); return; }
+  if (!confirm(`Replace the device layout with ${data.leds.length} LEDs and ${data.sensors.length} sensors from ${f.name}?`)) return;
+  S.scanning = true;
+  try {
+    await link.send(`modules ${clamp(data.modules | 0, 1, 16)}`);
+    await link.send('posclear');
+    for (const [i, x, y] of data.leds) await link.send(`pos ${i} ${x} ${y}`);
+    for (let j = 0; j < 16; j++) await link.send(`sensor ${j} clear`);
+    for (const s of data.sensors) await link.send(`sensor ${s.i} ${s.x} ${s.y} ${s.pin} ${s.activeLow ? 'low' : 'high'}`);
+    for (const [k, v] of Object.entries(data.params || {})) await link.send(`set ${k} ${v}`);
+  } finally { S.scanning = false; }
+  await save(true);
+  await syncAll();
+  log(`imported ${f.name}`, 'ok');
+};
+
+// ── console ──────────────────────────────────────────────────────────────
+$('#cmdIn').addEventListener('keydown', async e => {
+  if (e.key !== 'Enter') return;
+  const cmd = $('#cmdIn').value.trim();
+  if (!cmd) return;
+  $('#cmdIn').value = '';
+  if (!link.open) { log('not connected', 'bad'); return; }
+  const r = await link.send(cmd, 6000, true);
+  for (const l of r.lines) log(l, 'dev');
+  log(r.ok ? 'OK' : 'ERR ' + r.err, r.ok ? 'ok' : 'bad');
+});
+
+// ── heartbeat ────────────────────────────────────────────────────────────
+// status every 2 s: keeps the stream alive on the device and the page fresh
+setInterval(() => { if (link.open && !syncing && !link.queue.length) getStatus(); }, 2000);
+
+if (!('serial' in navigator)) log('This browser has no Web Serial. Use Chrome or Edge on a desktop.', 'bad');
+listCams();
+renderStatus();
+renderSensors();
+updateHint();
+fit();
+</script>
+</body>
+</html>
