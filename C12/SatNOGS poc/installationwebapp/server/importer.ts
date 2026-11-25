@@ -19,6 +19,7 @@ import { DEFAULT_IMAGE, imageGroup, pickImage } from '../src/images.ts'
 import type { Pass, PassImage } from '../src/shared/types.ts'
 import type { InstallationConfig } from './config.ts'
 import { imageKind } from './manifest.ts'
+import { sample, type PiSample } from './receiver.ts'
 
 const CHECK_EVERY = 60_000
 const RECENT_S = 6 * 3600 // passes this recent (by their start) are imported
@@ -40,7 +41,7 @@ interface PiPass {
   images?: PiImage[]
   orbit?: { aos?: number; los?: number; max_el?: number; aos_az?: number; los_az?: number } | null
   station?: { name?: string; lat?: number; lon?: number } | null
-  samples?: { t: number; az?: number | null; el?: number | null; snr?: number; deframer_lock?: boolean | number }[]
+  samples?: PiSample[]
 }
 
 export interface ImportStatus {
@@ -89,13 +90,7 @@ export function startImporter(o: { downloads: string; config: () => Installation
         fs.writeFileSync(path.join(part, fileOf(img)), Buffer.from(await res.arrayBuffer()))
         files.push(fileOf(img))
       }
-      const samples = (meta.samples ?? []).map((s) => ({
-        t: s.t * 1000,
-        az: s.az,
-        el: s.el,
-        snr: s.snr,
-        lock: s.deframer_lock === undefined ? undefined : !!s.deframer_lock,
-      }))
+      const samples = (meta.samples ?? []).map(sample)
       if (samples.length) fs.writeFileSync(path.join(part, 'signal.json'), JSON.stringify(samples))
       const orbit = meta.orbit ?? {}
       const start = orbit.aos ?? meta.time

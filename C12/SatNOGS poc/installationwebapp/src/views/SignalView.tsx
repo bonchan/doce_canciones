@@ -12,7 +12,7 @@ import { fmt, num, strings, useStrings } from '../i18n.ts'
 import { link, liveSlot, useLink, useTicker } from '../link.ts'
 import type { Slot } from '../shared/protocol.ts'
 import { loadSpectrogram, type Spectrogram } from '../spectrogram.ts'
-import { SignalChart, hasRealSignal, passSamples } from './LiveCharts.tsx'
+import { SignalChart, SignalTiles, hasRealSignal, passSamples } from './LiveCharts.tsx'
 import { activeSlot, geometryFor, phaseAt, satTimeAt } from '../timeline.ts'
 
 const D2R = Math.PI / 180
@@ -447,10 +447,13 @@ export function SignalView() {
   return (
     <Display title="signal">
       <div className="signal">
-        {live ? (
-          <div className="live-chart">
-            <SignalChart slotId={slot?.id ?? null} />
-          </div>
+        {live && slot ? (
+          <>
+            <SignalTiles slot={slot} />
+            <div className="live-chart">
+              <SignalChart slotId={slot.id} />
+            </div>
+          </>
         ) : slot?.pass.audio ? (
           <Waterfall key={slot.id} slotId={slot.id} url={slot.pass.audio} words={words} sky={sky} />
         ) : (

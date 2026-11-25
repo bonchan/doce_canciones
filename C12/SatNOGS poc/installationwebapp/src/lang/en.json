@@ -102,7 +102,21 @@
     "noSpectrum": "waiting for the receiver's spectrum",
     "snrAxis": "SNR (dB)",
     "elevationAxis": "elevation",
-    "syncLegend": "green: frames sync · red: no frames"
+    "syncLegend": "green: frames sync · red: no frames",
+    "tiles": {
+      "peakSnr": "peak {v} dB",
+      "locked": "locked",
+      "searching": "searching",
+      "deframer": "Deframer",
+      "synced": "synced",
+      "noSync": "no sync",
+      "rsFixed": "{n} fixed",
+      "rsFailing": "failing",
+      "rsHint": "average corrections per frame",
+      "frames": "Frames",
+      "freqOffset": "Frequency offset",
+      "tuned": "tuned {f} MHz"
+    }
   },
   "phrases": {
     "words": [

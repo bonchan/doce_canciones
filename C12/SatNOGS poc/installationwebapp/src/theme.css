@@ -53,7 +53,7 @@ body { overflow: hidden; }
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 1em;
-  height: 3em;
+  height: 4em;
   padding: 0 1.4em;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
@@ -253,6 +253,16 @@ body { overflow: hidden; }
 .wf-tick { position: absolute; top: 0.4em; transform: translateX(-50%); font-size: 0.7em; color: var(--dim); }
 .wf-tick.carrier { color: var(--rx); }
 .signal-note { position: absolute; right: 0.8em; bottom: 0.6em; font-size: 0.75em; color: var(--dim); }
+/* the receiver's signal readout over its chart (as raspberry_sat's Live page has it) */
+.signal-tiles { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0.7em; }
+.signal-tile { min-width: 0; padding: 0.55em 0.8em; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.signal-tile > div { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.st-label { font-size: 0.7em; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+.st-value { margin-top: 0.15em; font-size: 1.35em; font-variant-numeric: tabular-nums; }
+.st-sub { margin-top: 0.1em; font-size: 0.72em; color: var(--dim); }
+.signal-tile.ok .st-value { color: var(--ok); }
+.signal-tile.warn .st-value { color: var(--rx); }
+.signal-tile.bad .st-value { color: var(--station); }
 .meter { display: flex; align-items: center; gap: 1em; }
 .meter-bar { flex: 1; height: 0.8em; overflow: hidden; background: var(--line); border-radius: 3px; }
 .meter-bar div { height: 100%; background: linear-gradient(90deg, var(--sat), var(--rx)); }

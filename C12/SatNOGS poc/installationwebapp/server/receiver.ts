@@ -43,20 +43,34 @@ export interface PiWork {
   percent: number | null // 0-100, null when there's nothing to go by
 }
 
-interface PiSample {
+export interface PiSample {
   t: number // unix seconds
   az?: number | null
   el?: number | null
   snr?: number
+  peak_snr?: number
+  freq?: number
+  viterbi_ber?: number
+  viterbi_lock?: boolean | number
   deframer_lock?: boolean | number
+  rs_avg?: number
 }
 
-const sample = (s: PiSample): LiveSample => ({
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+const bool = (v: unknown) => (v === undefined || v === null ? undefined : !!v)
+
+// a sample as the displays keep it (the importer's signal.json too)
+export const sample = (s: PiSample): LiveSample => ({
   t: s.t * 1000,
   az: s.az,
   el: s.el,
-  snr: s.snr,
-  lock: s.deframer_lock === undefined ? undefined : !!s.deframer_lock,
+  snr: num(s.snr),
+  lock: bool(s.deframer_lock),
+  peak_snr: num(s.peak_snr),
+  freq: num(s.freq),
+  viterbi_ber: num(s.viterbi_ber),
+  viterbi_lock: bool(s.viterbi_lock),
+  rs_avg: num(s.rs_avg),
 })
 
 // what /api/schedule gives per pass (orbits.py describe_pass, plus the satellite)

@@ -129,6 +129,11 @@ export interface LiveSample {
   el?: number | null
   snr?: number
   lock?: boolean // the decoder had frames (deframer lock)
+  peak_snr?: number
+  freq?: number // Hz off the tuned frequency
+  viterbi_ber?: number
+  viterbi_lock?: boolean
+  rs_avg?: number // Reed-Solomon corrections per frame (negative: failing)
 }
 
 export type ServerMessage =

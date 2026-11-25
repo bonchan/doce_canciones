@@ -144,6 +144,77 @@ export function SignalChart({ slotId }: { slotId: number | null }) {
   return <canvas ref={ref} className="fill" />
 }
 
+// The receiver's signal readout over its chart, as raspberry_sat's Live page has it: SNR (its peak
+// under), the Viterbi decoder (locked or searching, its bit error rate), the deframer (frames in
+// sync), Reed-Solomon (corrections per frame), the frames so far and the frequency offset. A live
+// pass: the latest reading; an imported one: its sample at that moment of the replay (no frames).
+type Tone = 'ok' | 'warn' | 'bad'
+const FRAME_BYTES = 1024 // one Meteor LRPT frame (CADU)
+const WAITING = '…'
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const size = (bytes: number) => (bytes >= 1e6 ? `${num(bytes / 1e6, 1)} MB` : `${num(bytes / 1e3)} kB`)
+
+export function SignalTiles({ slot }: { slot: Slot }) {
+  const t = useStrings().live.tiles
+  const now = link.now()
+  const fresh = slot.pass.live && link.live && now - link.live.t < 10_000 ? link.live : null
+  const last = passSamples(slot).at(-1)
+  const s = fresh ? { ...fresh, lock: fresh.deframer_lock === undefined ? undefined : !!fresh.deframer_lock } : last
+  const snr = s?.snr
+  const peak = s?.peak_snr
+  const ber = s?.viterbi_ber
+  const rs = s?.rs_avg
+  const freq = s?.freq
+  const viterbi = s?.viterbi_lock === undefined || s?.viterbi_lock === null ? undefined : !!s.viterbi_lock
+  const synced = s?.lock
+  const tuned = slot.pass.live ? link.spectrum?.frequency : null
+  const tiles: { label: string; value: string; sub?: string; tone?: Tone }[] = [
+    {
+      label: 'SNR',
+      value: isNum(snr) ? `${num(snr, 1)} dB` : WAITING,
+      sub: isNum(peak) ? fmt(t.peakSnr, { v: num(peak, 1) }) : undefined,
+      tone: !isNum(snr) ? undefined : snr >= 4 ? 'ok' : snr >= 2 ? 'warn' : 'bad',
+    },
+    {
+      label: 'Viterbi',
+      value: viterbi === undefined ? WAITING : viterbi ? t.locked : t.searching,
+      sub: isNum(ber) ? `BER ${num(ber, 3)}` : undefined,
+      tone: viterbi === undefined ? undefined : viterbi ? 'ok' : 'bad',
+    },
+    {
+      label: t.deframer,
+      value: synced === undefined ? WAITING : synced ? t.synced : t.noSync,
+      tone: synced === undefined ? undefined : synced ? 'ok' : 'bad',
+    },
+    {
+      label: 'Reed-Solomon',
+      value: !isNum(rs) ? WAITING : rs >= 0 ? fmt(t.rsFixed, { n: num(rs, 1) }) : t.rsFailing,
+      sub: t.rsHint,
+      tone: !isNum(rs) ? undefined : rs >= 0 ? 'ok' : 'bad',
+    },
+  ]
+  if (slot.pass.live) {
+    const bytes = fresh?.bytes ?? 0
+    tiles.push({ label: t.frames, value: String(Math.floor(bytes / FRAME_BYTES)), sub: size(bytes), tone: bytes > 0 ? 'ok' : undefined })
+  }
+  tiles.push({
+    label: t.freqOffset,
+    value: isNum(freq) ? `${Math.round(freq)} Hz` : WAITING,
+    sub: tuned ? fmt(t.tuned, { f: num(tuned / 1e6, 3) }) : undefined,
+  })
+  return (
+    <div className="signal-tiles">
+      {tiles.map((x) => (
+        <div key={x.label} className={x.tone ? `signal-tile ${x.tone}` : 'signal-tile'}>
+          <div className="st-label">{x.label}</div>
+          <div className="st-value">{x.value}</div>
+          <div className="st-sub">{x.sub ?? '\u00a0'}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // The receiver's spectrum right now: the band across, the tuned frequency in the middle, with a
 // slowly falling peak line
 export function SpectrumPlot() {

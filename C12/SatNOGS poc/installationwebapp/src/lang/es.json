@@ -102,7 +102,21 @@
     "noSpectrum": "esperando el espectro del receptor",
     "snrAxis": "SNR (dB)",
     "elevationAxis": "elevación",
-    "syncLegend": "verde: tramas sincronizadas · rojo: sin tramas"
+    "syncLegend": "verde: tramas sincronizadas · rojo: sin tramas",
+    "tiles": {
+      "peakSnr": "pico {v} dB",
+      "locked": "enganchado",
+      "searching": "buscando",
+      "deframer": "Deframer",
+      "synced": "sincronizado",
+      "noSync": "sin sincronía",
+      "rsFixed": "{n} corregidos",
+      "rsFailing": "fallando",
+      "rsHint": "correcciones promedio por trama",
+      "frames": "Tramas",
+      "freqOffset": "Desvío de frecuencia",
+      "tuned": "sintonizado en {f} MHz"
+    }
   },
   "phrases": {
     "words": [
