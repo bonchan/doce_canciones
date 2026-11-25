@@ -51,6 +51,10 @@
     "next": "próxima · AOS {countdown}",
     "apt": "APT ♪",
     "digital": "digital",
+    "processing": "procesando",
+    "processingStep": "procesando · {step}",
+    "steps": { "decode": "decodificando", "images": "imágenes", "thumbnails": "terminando", "import": "importando" },
+    "noImage": "sin imagen",
     "library": "biblioteca: {passes} pasadas de {stations} estaciones · {satellites}"
   },
   "telemetry": {
@@ -84,6 +88,21 @@
   },
   "globe": {
     "elevation": "EL {el}°"
+  },
+  "live": {
+    "tag": "EN VIVO",
+    "receiving": "recibiendo en vivo",
+    "waiting": "pasada en vivo",
+    "snr": "SNR {snr} dB",
+    "locked": "decodificador enganchado",
+    "noLock": "buscando la señal",
+    "data": "{mb} MB recibidos",
+    "afterLos": "la imagen se decodifica después de LOS",
+    "spectrum": "espectro del receptor · en vivo",
+    "noSpectrum": "esperando el espectro del receptor",
+    "snrAxis": "SNR (dB)",
+    "elevationAxis": "elevación",
+    "syncLegend": "verde: tramas sincronizadas · rojo: sin tramas"
   },
   "phrases": {
     "words": [

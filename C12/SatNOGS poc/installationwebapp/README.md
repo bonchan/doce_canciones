@@ -99,7 +99,7 @@ before any repeats. A pass without a photo looks as before.
 - **Reception**: behind the scan line, the photo develops wherever the satellite saw cloud (and
   in the phrase's letters), mirrored, as seen from the other side. That second line sets off a
   while after AOS, reaches the scan line at 92% of the pass and arrives with it from there.
-- **Globes**: the photo wrapped around the Earth like a texture, over the map (80%): a square
+- **Globes** (not on real passes: there the map as it is): the photo wrapped around the Earth like a texture, over the map (80%): a square
   from its middle and its mirror image, so it goes round without a seam, the middle over the
   station. It fades from one pass's sky to the next.
 - **Telemetry**: the sky plot becomes an all-sky camera: the photo as a fisheye dome, zenith in
@@ -122,6 +122,49 @@ pnpm add sharp
 
 `src/art/sky.ts` picks the photo, `src/art/skyImages.ts` makes the dome and the strips, `src/components/Cenit.tsx` is the moment the screens look up, `src/components/Ghosts.tsx` the
 ghosts (how often, at the top), `server/sky.ts` serves them.
+
+## Live passes (the real receiver)
+
+The server can follow a real receiver: raspberry_sat on a Raspberry Pi (SatDump, Meteor LRPT).
+Its own section of settings, `receiver` (operator page and core2's page, "Real passes"; live, no
+restart): on / off, its address (`http://rpi4b.local:8000`), the lowest pass that goes live (°),
+and how long after AOS the screens switch to it (s). Only the server talks to the Pi
+(`server/receiver.ts`), by its own API:
+
+- Every minute its upcoming passes, the ones it will record (`/api/schedule`), with its station
+  (`/api/tles`). Each becomes a live slot at its real AOS and LOS, real time whatever the speed.
+  Replays go on until its AOS; then the screens switch straight to it, already receiving (no
+  approach, no waiting): the replay on air is cut, the ones after the live pass follow on.
+- Once a second while a live slot is near or on air, its reading and the pass's samples
+  (`/api/live`): where the satellite is, SNR, the decoder's lock, the data so far. Four times a
+  second during the pass, its spectrum (`/api/spectrum`). Every display gets them (one that joins
+  late gets the pass's samples so far).
+- What the screens make of it: the top bar marks it LIVE; the telemetry sky plot paints the track
+  green while frames sync and red while not, as raspberry_sat does, with the satellite where the
+  receiver says, and the spectrum in place of the doppler curve; the signal screen draws the signal
+  over the pass (SNR, the elevation behind it, the sync strip); the reception screen, until the
+  image exists, is a waterfall of the receiver's spectrum with the phrase's words written into it
+  as the satellite reaches them.
+- No ghosts on a live pass (a test still shows).
+- Once the receiver has decoded a pass (a few minutes after LOS) it joins the library
+  (`server/importer.ts`, `importPasses`): a folder in `downloads/` like listener.py's, with the image
+  kind shown for its satellite family (the image setting, else the default) and the receiver's main
+  image when it's another, as JPEGs, and its signal (`signal.json`). It's replayed like the others;
+  with `playImported` on it plays right after the one on air. Its replays draw the real signal on
+  the signal screen and the green / red track on the sky plot. Passes started in the last 6 hours.
+- The passes board, top to bottom: the last 3 received; the one on air (live or a replay); the live
+  pass past LOS while the Pi processes it, saying how far (its WebSocket topic `processing`:
+  decoding, images, finishing, with a percent when it can tell; then importing); the upcoming ones,
+  the processed live pass first (imported straight away, it plays right after the one on air when
+  `playImported` is on; without an image the row says so till the pass on air ends); the next real
+  pass pinned under the list (from the receiver's schedule, with its countdown), not from the live
+  pass's AOS till its processed replay is on air. The live pass itself never joins the received:
+  its replay does, once played. Real passes (live, or received and imported) in their own colour,
+  the live one tagged LIVE. Passes imported that aren't the live one just processed (from before
+  the server started) join the end of the list.
+- The Pi not answering (switched off, the network down) doesn't stop anything: after 3 requests in
+  a row unanswered (3 min, or some 20 s when a live pass is near) its passes leave the timeline, a
+  live one on air included, and the replays go on; they come back when it answers again.
 
 ## core2 (MQTT)
 
@@ -160,6 +203,8 @@ each screen shows is set on each computer, in its agent's `agent.ini`.
 - `cenit`: the look-up moment (see Sky): `{ "on": true, "fadeIn": 1.8, "hold": 5.5, "fadeOut":
   2.6, "opacity": 100, "zoom": 135, "drift": 3, "minPass": 25 }` (seconds; opacity, zoom and drift
   in %); fields left out are as designed
+- `receiver`: the real passes (see Live passes): `{ "enabled": true, "url": "http://rpi4b.local:8000",
+  "minElevation": 0, "joinDelay": 0, "importPasses": true, "playImported": true }`
 - `ghostsOn`: the ghosts at all (`false` keeps their settings below)
 - `ghosts`: per kind (`tear`, `echo`, `roll` on NOAA; `blocks`, `smear`, `mosaic` on METEOR),
   `{ "appear": "low" | "high" | "steady" | "off", "delay": seconds, "prominence": % }` (see Sky);

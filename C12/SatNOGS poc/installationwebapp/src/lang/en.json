@@ -51,6 +51,10 @@
     "next": "next · AOS {countdown}",
     "apt": "APT ♪",
     "digital": "digital",
+    "processing": "processing",
+    "processingStep": "processing · {step}",
+    "steps": { "decode": "decoding", "images": "images", "thumbnails": "finishing", "import": "importing" },
+    "noImage": "no image",
     "library": "library: {passes} passes from {stations} stations · {satellites}"
   },
   "telemetry": {
@@ -84,6 +88,21 @@
   },
   "globe": {
     "elevation": "EL {el}°"
+  },
+  "live": {
+    "tag": "LIVE",
+    "receiving": "receiving live",
+    "waiting": "live pass",
+    "snr": "SNR {snr} dB",
+    "locked": "decoder locked",
+    "noLock": "searching for the signal",
+    "data": "{mb} MB received",
+    "afterLos": "the image is decoded after LOS",
+    "spectrum": "receiver spectrum · live",
+    "noSpectrum": "waiting for the receiver's spectrum",
+    "snrAxis": "SNR (dB)",
+    "elevationAxis": "elevation",
+    "syncLegend": "green: frames sync · red: no frames"
   },
   "phrases": {
     "words": [

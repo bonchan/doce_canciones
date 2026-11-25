@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import type { CenitTest, ClientMessage, DisplayInfo, GhostTest, PassSummary, ServerMessage, Slot, StateMessage } from './shared/protocol.ts'
+import type { AfterLos, CenitTest, ClientMessage, DisplayInfo, GhostTest, LiveReading, LiveSample, PassSummary, ServerMessage, Slot, StateMessage } from './shared/protocol.ts'
 import { AUDIO, DISPLAY_ID, VIEW } from './params.ts'
 
 const clientNow = () => performance.timeOrigin + performance.now()
@@ -15,6 +15,12 @@ class Link {
   identifyUntil = 0
   ghostTests: GhostTest[] = [] // the last 20 s of them (components/Ghosts.tsx)
   cenitTests: CenitTest[] = [] // the last few (components/Cenit.tsx)
+  live: LiveReading | null = null // the real receiver's latest, during a live slot
+  liveSamples: LiveSample[] = [] // the live pass's, a second each, oldest first
+  afterLos: Record<number, AfterLos> = {} // the live passes past LOS: the Pi decoding them, or done
+  // the receiver's latest spectrum (0..255 per bin); kept without re-rendering: the views that show
+  // it read it every frame
+  spectrum: { t: number; bins: Uint8Array; frequency: number | null; samplerate: number | null } | null = null
   private offset = 0
   private samples: { rtt: number; offset: number }[] = []
   private ws: WebSocket | null = null
@@ -95,6 +101,20 @@ class Link {
         if (msg.action === 'reload') location.reload()
         if (msg.action === 'identify') this.identifyUntil = Date.now() + 6000
         break
+      case 'afterlos':
+        this.afterLos = msg.passes
+        break
+      case 'live':
+        this.live = msg.reading
+        this.liveSamples = msg.reset ? [...msg.samples] : [...this.liveSamples, ...msg.samples].slice(-3600)
+        break
+      case 'spectrum': {
+        const raw = atob(msg.bins)
+        const bins = new Uint8Array(raw.length)
+        for (let i = 0; i < raw.length; i++) bins[i] = raw.charCodeAt(i)
+        this.spectrum = { t: msg.t, bins, frequency: msg.frequency, samplerate: msg.samplerate }
+        return // no re-render, 4 a second
+      }
       case 'cenit':
         this.cenitTests = [...this.cenitTests.slice(-4), { at: msg.at }]
         break

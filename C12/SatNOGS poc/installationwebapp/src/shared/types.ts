@@ -31,4 +31,7 @@ export interface Pass {
   images: PassImage[]
   audio: string | null // APT recordings only
   audio_seconds: number | null // length of the recording, read from the .ogg
+  live?: boolean // a pass the real receiver (raspberry_sat) is about to receive: real times, no images yet
+  signal?: string | null // a real pass imported from the receiver: its signal.json (LiveSample[], ms)
+  ours?: boolean // received by the installation's own receiver (imported, server/importer.ts)
 }

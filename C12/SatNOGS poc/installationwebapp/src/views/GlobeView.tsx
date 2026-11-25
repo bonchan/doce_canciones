@@ -132,7 +132,8 @@ export function GlobeView() {
   const passId = slot?.pass.id ?? null
   const phrasesOn = l.state?.config.phrases ?? false
   const language = l.state?.config.language
-  const skyFile = slot ? skyFor(slot.id, l.state?.sky, l.state?.config.sky) : null
+  // a real pass (the receiver): the map as it is, no sky over it
+  const skyFile = slot && !slot.pass.live ? skyFor(slot.id, l.state?.sky, l.state?.config.sky) : null
   const skyImage = useSky(skyFile, CAMERA === 'follow' ? 2560 : 1920)
 
   useEffect(() => {

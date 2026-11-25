@@ -9,6 +9,7 @@
   --rx: #ffcf4a;
   --station: #ff5470;
   --ok: #6be3a4;
+  --real: #b99aff; /* our own antenna's passes (the real receiver) */
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: max(13px, 1.7vmin);
   color: var(--text);
@@ -61,6 +62,16 @@ body { overflow: hidden; }
 .tb-left { display: flex; align-items: center; gap: 0.6em; letter-spacing: 0.08em; }
 .tb-dot { width: 0.6em; height: 0.6em; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0.6em var(--ok); }
 .tb-dot.off { background: var(--station); box-shadow: none; }
+/* a pass the real receiver is receiving right now */
+.tb-live {
+  margin-right: 0.6em;
+  padding: 0.05em 0.45em;
+  border: 1px solid var(--rx);
+  border-radius: 0.25em;
+  color: var(--rx);
+  font-size: 0.8em;
+  letter-spacing: 0.12em;
+}
 .tb-center { overflow: hidden; text-overflow: ellipsis; text-align: center; }
 .tb-phase { margin-left: 1.2em; letter-spacing: 0.12em; }
 .tb-right { text-align: right; font-size: 1.15em; font-variant-numeric: tabular-nums; }
@@ -173,6 +184,41 @@ body { overflow: hidden; }
 .mini-bar { display: inline-block; width: 5em; height: 0.35em; margin-left: 0.6em; vertical-align: middle; background: var(--line); }
 .mini-bar span { display: block; height: 100%; background: var(--rx); }
 .schedule footer { margin-top: auto; font-size: 0.85em; color: var(--dim); }
+/* the list: when it's longer than the screen the pinned row stays in sight, over the rows it hides */
+.schedule-list { flex: 0 1 auto; min-height: 0; overflow: hidden; }
+.schedule tfoot { position: sticky; bottom: 0; background: var(--bg); }
+.schedule tr.gap td { height: 0.9em; padding: 0; border-bottom: 1px dashed var(--real); }
+
+/* passes of our own antenna (the real receiver): live, coming, or received and imported. A violet
+   bar down their left, their satellite in violet with its tag, a violet tint */
+.schedule tr.real td:first-child { box-shadow: inset 0.3em 0 0 var(--real); padding-left: 1em; }
+.schedule tr.real:not(.has-sky) td { background: rgba(185, 154, 255, 0.06); }
+.schedule tr.real.row-current:not(.has-sky) td { background: rgba(185, 154, 255, 0.13); }
+.schedule tr.real td.sat-name { color: var(--real); }
+.schedule tr.real.row-done td.sat-name { color: color-mix(in srgb, var(--real) 55%, var(--dim)); }
+.schedule tr.real .mini-bar span { background: var(--real); box-shadow: 0 0 0.5em var(--real); }
+.real-tag {
+  display: inline-block;
+  margin-left: 0.7em;
+  padding: 0.05em 0.45em;
+  border: 1px solid currentColor;
+  border-radius: 0.25em;
+  font-size: 0.62em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  vertical-align: 0.2em;
+}
+/* a live pass past LOS while the Pi decodes it; with no percent to go by, the bar goes to and fro */
+.proc { color: var(--real); }
+.mini-bar.busy { overflow: hidden; }
+.mini-bar.busy span { width: 30%; animation: bar-busy 1.6s ease-in-out infinite alternate; }
+@keyframes bar-busy { to { margin-left: 70%; } }
+/* on air: the tag lit, the bar breathing */
+.schedule tr.real.row-current .real-tag { background: var(--real); border-color: var(--real); color: var(--bg); }
+.schedule tr.real.row-current td:first-child { animation: real-pulse 2.4s ease-in-out infinite; }
+@keyframes real-pulse {
+  50% { box-shadow: inset 0.3em 0 0 var(--real), inset 2.5em 0 1.5em -1.5em rgba(185, 154, 255, 0.45); }
+}
 
 /* --- telemetry */
 .telemetry {
@@ -200,6 +246,10 @@ body { overflow: hidden; }
 /* a pass's sky photo behind the NOAA waterfall, showing through its noise */
 .waterfall .wf-sky { position: absolute; inset: 0; }
 .waterfall .wf-main { position: relative; }
+/* a live pass (the real receiver): its waterfall over the whole reception screen, its signal
+   chart on the signal screen */
+.live-waterfall { position: absolute; inset: 0; border: none; border-radius: 0; }
+.live-chart { position: relative; min-height: 0; flex: 1; border: 1px solid var(--line); border-radius: 6px; }
 .wf-tick { position: absolute; top: 0.4em; transform: translateX(-50%); font-size: 0.7em; color: var(--dim); }
 .wf-tick.carrier { color: var(--rx); }
 .signal-note { position: absolute; right: 0.8em; bottom: 0.6em; font-size: 0.75em; color: var(--dim); }

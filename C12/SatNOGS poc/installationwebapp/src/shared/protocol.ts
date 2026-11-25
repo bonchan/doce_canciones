@@ -1,6 +1,7 @@
 // WebSocket messages between server/index.ts and the displays
 import type { CenitSettings } from './cenit.ts'
 import type { GhostKind, GhostsSettings } from './ghosts.ts'
+import type { ReceiverSettings } from './receiver.ts'
 import type { Pass } from './types.ts'
 
 // the part of installation.json every display needs
@@ -27,6 +28,7 @@ export interface Settings extends SharedConfig {
   approachSeconds: number // fast-forward from 15 min before AOS
   departSeconds: number
   upcoming: number // passes scheduled ahead
+  receiver: ReceiverSettings // the real passes (src/shared/receiver.ts)
 }
 
 // One pass on the shared timeline. Times are the server's clock (epoch ms): every display
@@ -78,6 +80,9 @@ export interface StateMessage {
   config: Settings
   library: LibraryInfo
   sky: string[] // the sky photos' file names (served at /sky/<name>)
+  // the real receiver's next passes that go live, soonest first (none while it's off or doesn't
+  // answer): the passes board shows the next one
+  real?: Pass[]
 }
 
 // a test of the ghosts, from the operator page or core2: these kinds, on every display at `at`
@@ -93,6 +98,39 @@ export interface CenitTest {
   at: number
 }
 
+// A live pass after LOS (the passes board): the Pi decoding it, how far (its step, and percent when
+// it can tell; 'import': done, its images coming over), then received (pass: the imported pass,
+// on next) or finished without an image (shown as such till `until`: the pass on air then ends)
+export type AfterLos =
+  | { state: 'processing'; step: 'decode' | 'images' | 'thumbnails' | 'import' | null; percent: number | null }
+  | { state: 'received'; pass: number | null }
+  | { state: 'empty'; until: number }
+
+// the real receiver's latest reading during a live pass (server/receiver.ts, from raspberry_sat)
+export interface LiveReading {
+  t: number // when it was read, ms
+  receiving: boolean // SatDump is recording and decoding
+  az?: number | null // where the satellite is, degrees
+  el?: number | null
+  snr?: number // dB
+  peak_snr?: number
+  freq?: number
+  viterbi_ber?: number
+  viterbi_lock?: boolean | number
+  deframer_lock?: boolean | number // the decoder is getting frames
+  rs_avg?: number
+  bytes: number // data received so far
+}
+
+// one second of a live pass, as the receiver keeps them (raspberry_sat's history)
+export interface LiveSample {
+  t: number // ms
+  az?: number | null
+  el?: number | null
+  snr?: number
+  lock?: boolean // the decoder had frames (deframer lock)
+}
+
 export type ServerMessage =
   | StateMessage
   | { type: 'pong'; t0: number; server: number }
@@ -101,6 +139,14 @@ export type ServerMessage =
   | { type: 'command'; action: 'reload' | 'identify'; ids?: string[] } // ids: only those displays
   | ({ type: 'ghost' } & GhostTest)
   | ({ type: 'cenit' } & CenitTest)
+  // once a second while a live slot is near or on: the latest reading and the samples since the
+  // last message (reset: these are all of the pass's, from the start)
+  | { type: 'live'; reading: LiveReading | null; samples: LiveSample[]; reset: boolean }
+  // the receiver's spectrum, 4 a second during a live pass: 0..255 per bin, base64, the tuned
+  // frequency in the middle
+  | { type: 'spectrum'; t: number; bins: string; frequency: number | null; samplerate: number | null }
+  // the live passes past LOS, by pass id, when one changes (and on connecting)
+  | { type: 'afterlos'; passes: Record<number, AfterLos> }
 
 export type ControlAction = 'skip' | 'restart' | 'identify' | 'reload'
 

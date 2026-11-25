@@ -11,6 +11,7 @@ import { fmt, useStrings } from '../i18n.ts'
 import { DEFAULT_IMAGE, imageGroup, kindLabel, pickImage } from '../images.ts'
 import { link, liveSlot, useLink, useTicker } from '../link.ts'
 import { activeSlot, countdown, phaseAt, progressAt, recorded } from '../timeline.ts'
+import { LiveWaterfall } from './LiveCharts.tsx'
 
 const NOISE_ROWS = 6
 
@@ -240,6 +241,9 @@ export function ImageView() {
             <div className="dim">{slot.pass.station_name ?? text.common.unknownStation}</div>
             <div className="standby-count">{fmt(text.image.aos, { countdown: countdown(slot.aos - now) })}</div>
           </div>
+        )}
+        {slot && slot.pass.live && !image && phase !== 'waiting' && phase !== 'approach' && (
+          <LiveWaterfall key={slot.id} slotId={slot.id} words={words} />
         )}
         {slot && image && (
           <div className="caption">

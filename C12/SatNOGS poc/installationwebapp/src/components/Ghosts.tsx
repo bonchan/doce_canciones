@@ -383,7 +383,8 @@ export function Ghosts() {
       raf = requestAnimationFrame(draw)
       const t = link.now()
       const s = liveSlot(slotId)
-      const on = real && s && link.state?.config.ghostsOn !== false && t >= s.aos && t < s.los + MAX_MS
+      // none of their own on a live pass (the real receiver): the real signal breaks up on its own
+      const on = real && s && !s.pass.live && link.state?.config.ghostsOn !== false && t >= s.aos && t < s.los + MAX_MS
       // one at a time: a test showing hides the pass's own
       const tests = testsAt(t, s)
       const ghosts = tests.length ? tests : on ? ghostsAt(s, t) : []

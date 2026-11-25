@@ -11,7 +11,7 @@ import type { Pass } from '../src/shared/types.ts'
 //   satnogs_<id>_<time>.png (apt_decode.py)           -> decoded
 //   data_15105291_msu_mr_rgb_MCIR_map.png             -> mcir_map     (METEOR, SatDump products)
 //   data_15095028_MSU-MR_Filled_msu_mr_rgb_MCIR.png   -> mcir_filled
-function imageKind(file: string): { kind: string; label: string } {
+export function imageKind(file: string): { kind: string; label: string } {
   let name = file.replace(/\.[^.]+$/, '')
   if (/^satnogs_/i.test(name)) return { kind: 'decoded', label: 'Decoded' }
   name = name
@@ -26,7 +26,7 @@ function imageKind(file: string): { kind: string; label: string } {
 }
 
 // observation.json as written by listener.py
-type ObservationJson = Partial<Pass> & { station_lat?: number; station_lng?: number }
+type ObservationJson = Partial<Pass> & { station_lat?: number; station_lng?: number; receiver_pass?: string }
 
 function readJson(file: string): ObservationJson {
   try {
@@ -145,6 +145,9 @@ export function scanPasses(downloads: string): Pass[] {
       images,
       audio: audio ? url(audio) : null,
       audio_seconds: audio && /\.ogg$/i.test(audio) ? audioSeconds(path.join(folder, audio)) : null,
+      // a real pass imported from the receiver (importer.ts): its signal over the pass
+      signal: files.includes('signal.json') ? url('signal.json') : null,
+      ...(meta.receiver_pass ? { ours: true } : {}),
     })
   }
   return passes.sort((a, b) => a.start.localeCompare(b.start))

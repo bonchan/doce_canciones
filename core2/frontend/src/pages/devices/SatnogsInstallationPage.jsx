@@ -17,6 +17,10 @@ import CommandPanel from '../../components/CommandPanel';
 //                       or {} for all of them
 //   CENIT               a test of the look-up moment (the plain sky photo), now on every display
 //
+// Real passes: the server follows a real receiver (raspberry_sat on a Raspberry Pi); its passes go
+// live on the timeline. SETTINGS {"receiver": {"enabled": true, "url": ..., "minElevation": 20,
+// "joinDelay": 0}}, only what's in it changing.
+//
 // The language list comes from its announce (node.meta.languages), so adding a language file
 // there makes a button appear here.
 
@@ -148,6 +152,123 @@ function CenitSection({ c, settings, cmd }) {
         </>
       ) : (
         <p className="dim">Not in the telemetry yet (an older server).</p>
+      )}
+    </section>
+  );
+}
+
+// The real passes' section: on / off, how the receiver is doing, the next one, and its fields
+// (sent when a field is done: Enter or leaving it).
+const RECEIVER_FIELDS = [
+  // key, label, number or text, min, max, step
+  ['url', 'Receiver (raspberry_sat)', 'text'],
+  ['minElevation', 'Only passes higher than (°)', 'number', 0, 90, 1],
+  ['joinDelay', 'Switch to it after AOS (s)', 'number', 0, 600, 1],
+];
+
+function RealPassesSection({ t, settings }) {
+  const r = t.receiver;
+  const [drafts, setDrafts] = useState({});
+  const value = (key) => {
+    const d = drafts[key];
+    return d && (!d.sent || r?.[key] === d.liveAtSend) ? d.value : r?.[key];
+  };
+  const edit = (key, v) => setDrafts((x) => ({ ...x, [key]: { value: v } }));
+  const send = (key, type, min, max) => {
+    const d = drafts[key];
+    if (!d || d.sent) return; // nothing new
+    let v = d.value;
+    if (type === 'number') {
+      v = v === '' ? NaN : Number(v);
+      if (!Number.isFinite(v)) {
+        setDrafts((x) => ({ ...x, [key]: undefined }));
+        return;
+      }
+      v = Math.min(max, Math.max(min, v));
+    } else {
+      v = String(v).trim();
+      if (!/^https?:\/\/\S+$/.test(v)) {
+        setDrafts((x) => ({ ...x, [key]: undefined }));
+        return;
+      }
+    }
+    settings({ receiver: { [key]: v } });
+    setDrafts((x) => ({ ...x, [key]: { value: v, sent: true, liveAtSend: r?.[key] } }));
+  };
+
+  const next = t.next_live;
+  return (
+    <section className="card">
+      <h3>Real passes</h3>
+      <p className="dim">
+        The server follows a real receiver (raspberry_sat on a Raspberry Pi): each pass it will record
+        goes live on every screen. Replays go on until its AOS, then the screens switch to it. No ghosts on
+        real passes.
+      </p>
+      {!r ? (
+        <p className="dim">Not in the telemetry yet (an older server).</p>
+      ) : (
+        <>
+          <div style={ROW}>
+            <button className="jog-btn" style={r.enabled ? ON : null} onClick={() => settings({ receiver: { enabled: !r.enabled } })}>
+              Real passes {r.enabled ? 'on' : 'off'}
+            </button>
+            <button className="jog-btn" style={r.importPasses ? ON : null}
+              title="Once the receiver has decoded a pass it goes into the downloads folder, and is replayed like the others"
+              onClick={() => settings({ receiver: { importPasses: !r.importPasses } })}>
+              Finished passes into the library {r.importPasses ? 'on' : 'off'}
+            </button>
+            <button className="jog-btn" style={r.playImported ? ON : null}
+              title="Once processed, the live pass plays right after the one on air"
+              onClick={() => settings({ receiver: { playImported: !r.playImported } })}>
+              Play it right after {r.playImported ? 'on' : 'off'}
+            </button>
+          </div>
+          {r.enabled && (
+            <p>
+              {t.receiver_ok === true && <span style={{ color: '#34d399' }}>● receiver answering</span>}
+              {t.receiver_ok === false && <span style={{ color: '#f87171' }} title={t.receiver_error || ''}>○ receiver not answering{t.receiver_error ? `: ${t.receiver_error}` : ''}</span>}
+              {t.receiver_ok == null && <span className="dim">asking the receiver…</span>}
+            </p>
+          )}
+          {r.enabled && t.live && (
+            <p>
+              <b>Live now:</b> {t.satellite}
+              {t.live_snr != null ? `, SNR ${Number(t.live_snr).toFixed(1)} dB` : ''}
+              {t.live_lock != null ? (t.live_lock ? ', frames sync' : ', no frames') : ''}
+            </p>
+          )}
+          {r.enabled && r.importPasses && (t.last_import || t.import_error) && (
+            <p className="dim">
+              {t.last_import ? `Last imported: ${t.last_import.satellite} (${t.last_import.folder})` : ''}
+              {t.import_error ? <span style={{ color: '#f87171' }}> Import failed: {t.import_error}</span> : null}
+            </p>
+          )}
+          {r.enabled && !t.live && (
+            <p className="dim">
+              {next ? `Next real pass: ${next.satellite}, AOS in ${clock(next.aos_in)}, up to ${next.max_el ?? '?'}°` : 'No real pass ahead (yet).'}
+            </p>
+          )}
+          <table style={{ ...TABLE, opacity: r.enabled ? 1 : 0.6 }}>
+            <tbody>
+              {RECEIVER_FIELDS.map(([key, label, type, min, max, step]) => {
+                const v = value(key);
+                return (
+                  <tr key={key}>
+                    <td style={CELL}>{label}</td>
+                    <td style={CELL}>
+                      <input type={type} min={min} max={max} step={step} value={v ?? ''}
+                        style={{ width: type === 'text' ? 260 : 80 }}
+                        onChange={(e) => edit(key, e.target.value)}
+                        onBlur={() => send(key, type, min, max)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
       )}
     </section>
   );
@@ -353,6 +474,8 @@ export default function SatnogsInstallationPage({ node, sendCommand, error }) {
       </section>
 
       <CenitSection c={t.cenit} settings={settings} cmd={cmd} />
+
+      <RealPassesSection t={t} settings={settings} />
 
       <section className="card">
         <h3>Displays</h3>

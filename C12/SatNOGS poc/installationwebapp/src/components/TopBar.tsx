@@ -44,6 +44,7 @@ export function TopBar({ title }: { title: keyof Strings['titles'] }) {
       <div className="tb-center">
         {slot ? (
           <>
+            {slot.pass.live && <span className="tb-live">{text.live.tag}</span>}
             <b>{slot.pass.satellite}</b>
             <span className="dim"> · </span>
             {slot.pass.station_name ?? text.common.unknownStation}

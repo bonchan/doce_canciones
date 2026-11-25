@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CENIT_DEFAULTS, cleanCenit } from '../src/shared/cenit.ts'
+import { RECEIVER_DEFAULTS, cleanReceiver } from '../src/shared/receiver.ts'
 import { GHOST_DEFAULTS, GHOST_KINDS, cleanGhosts, type GhostKind } from '../src/shared/ghosts.ts'
 import type { Settings } from '../src/shared/protocol.ts'
 
@@ -41,6 +42,7 @@ const DEFAULTS: InstallationConfig = {
   approachSeconds: 8,
   departSeconds: 6,
   upcoming: 8,
+  receiver: RECEIVER_DEFAULTS,
   mqtt: {
     enabled: false,
     broker: 'mqtt://nuc.local:1883',
@@ -64,6 +66,7 @@ const EDITABLE: (keyof Settings)[] = [
   'ghostsOn',
   'ghosts',
   'cenit',
+  'receiver',
   'order',
   'satellites',
   'waitSeconds',
@@ -99,6 +102,7 @@ export function loadConfig(): InstallationConfig {
     ...raw,
     server: { ...DEFAULTS.server, ...raw.server },
     mqtt: { ...DEFAULTS.mqtt, ...raw.mqtt },
+    receiver: cleanReceiver(raw.receiver),
     images: { ...DEFAULTS.images, ...raw.images },
     // a percentage; it used to be on / off
     sky: typeof raw.sky === 'number' ? Math.min(100, Math.max(0, raw.sky)) : raw.sky === false ? 0 : 100,
@@ -127,6 +131,8 @@ export function cleanSettings(patch: Record<string, unknown>, current: Installat
   if (Array.isArray(patch.satellites) && patch.satellites.every((s) => typeof s === 'string')) out.satellites = patch.satellites
   // e.g. {"tear": {"delay": 6}}: only what's in it changes
   if (patch.ghosts && typeof patch.ghosts === 'object') out.ghosts = cleanGhosts(patch.ghosts, current.ghosts)
+  // e.g. {"enabled": false} or {"joinDelay": 30}: only what's in it changes
+  if (patch.receiver && typeof patch.receiver === 'object') out.receiver = cleanReceiver(patch.receiver, current.receiver)
   // e.g. {"hold": 8}: only what's in it changes
   if (patch.cenit && typeof patch.cenit === 'object') out.cenit = cleanCenit(patch.cenit, current.cenit)
   if (patch.images && typeof patch.images === 'object') {

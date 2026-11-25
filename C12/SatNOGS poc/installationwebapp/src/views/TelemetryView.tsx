@@ -9,6 +9,7 @@ import { num, strings, useStrings } from '../i18n.ts'
 import { link, liveSlot, useLink, useTicker } from '../link.ts'
 import { downlinkMHz, dopplerHz, pathLossDb, rangeRate } from '../radio.ts'
 import { activeSlot, geometryFor, phaseAt, recordingTime, satTimeAt, stationFor } from '../timeline.ts'
+import { NO_SYNC, SYNC, SpectrumPlot, passSamples } from './LiveCharts.tsx'
 
 const D2R = Math.PI / 180
 const DOME_TURN_S = 600 // the sky turns once every 10 minutes
@@ -90,11 +91,32 @@ function SkyPlot({ slotId, sky }: { slotId: number | null; sky: string | null })
       }
       track(g.tAos, g.tLos, dome ? 'rgba(127, 212, 255, 0.55)' : 'rgba(127, 212, 255, 0.3)', 2)
       track(g.tAos, Math.min(Math.max(ts, g.tAos), g.tLos), COLORS.sat, 3)
+      // a real pass (live, or imported and replayed): the receiver's own track over it, green while
+      // frames sync, red while not (as raspberry_sat draws it)
+      const live = passSamples(s).filter((p) => p.lock !== undefined && p.az != null && p.el != null)
+      const at = (az: number, el: number): [number, number] => {
+        const r = R * (1 - Math.max(0, el) / 90)
+        return [cx + r * Math.sin(az * D2R), cy - r * Math.cos(az * D2R)]
+      }
+      ctx.lineWidth = 4 * dpr
+      ctx.lineJoin = 'round'
+      ctx.lineCap = 'round'
+      for (let i = 1; i < live.length; i++) {
+        ctx.beginPath()
+        ctx.moveTo(...at(live[i - 1].az!, live[i - 1].el!))
+        ctx.lineTo(...at(live[i].az!, live[i].el!))
+        ctx.strokeStyle = live[i].lock ? SYNC : NO_SYNC
+        ctx.stroke()
+      }
+      ctx.lineCap = 'butt'
       ctx.fillStyle = dome ? COLORS.text : COLORS.dim
       ctx.fillText(text.aos, ...offsetLabel(xy(g.tAos), cx, cy, 22 * dpr))
       ctx.fillText(text.los, ...offsetLabel(xy(g.tLos), cx, cy, 22 * dpr))
-      if (g.look(ts).elevation > 0) {
-        const [x, y] = xy(ts)
+      // where the satellite is: the receiver's reading on a live pass
+      const reading = s.pass.live && link.live && t - link.live.t < 10_000 ? link.live : null
+      const real = reading?.az != null && reading.el != null ? reading : null
+      if (real ? real.el! > 0 : g.look(ts).elevation > 0) {
+        const [x, y] = real ? at(real.az!, real.el!) : xy(ts)
         const rx = phaseAt(s, t) === 'pass'
         ctx.shadowColor = rx ? COLORS.rx : COLORS.sat
         ctx.shadowBlur = 16 * dpr
@@ -221,9 +243,7 @@ export function TelemetryView() {
           />
           <Readout label={text.maxElevation} value={slot?.pass.max_altitude != null ? `${num(slot.pass.max_altitude)}°` : '—'} />
         </div>
-        <div className="doppler">
-          <DopplerPlot slotId={slot?.id ?? null} />
-        </div>
+        <div className="doppler">{slot?.pass.live ? <SpectrumPlot /> : <DopplerPlot slotId={slot?.id ?? null} />}</div>
       </div>
     </Display>
   )

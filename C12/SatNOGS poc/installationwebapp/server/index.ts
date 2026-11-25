@@ -11,13 +11,16 @@ import http from 'node:http'
 import path from 'node:path'
 import sirv from 'sirv'
 import { WebSocket, WebSocketServer } from 'ws'
-import type { ClientMessage, DisplayInfo, ServerMessage } from '../src/shared/protocol.ts'
+import type { AfterLos, ClientMessage, LiveReading, LiveSample, DisplayInfo, ServerMessage } from '../src/shared/protocol.ts'
 import { skyFor } from '../src/art/sky.ts'
 import { phaseAt, progressAt } from '../src/timeline.ts'
 import { Conductor } from './conductor.ts'
 import { CONFIG_FILE, ROOT, cleanSettings, ghostKinds, loadConfig, saveSettings, settingsOf } from './config.ts'
 import { startDevice, type Device } from './device.ts'
 import { libraryInfo, scanPasses, summary } from './manifest.ts'
+import { startImporter } from './importer.ts'
+import { startReceiver, type PiWork } from './receiver.ts'
+import type { Pass } from '../src/shared/types.ts'
 import { scanSky, serveSky } from './sky.ts'
 
 const PROD = process.argv.includes('--prod')
@@ -25,6 +28,19 @@ let cfg = loadConfig()
 const DOWNLOADS = path.resolve(ROOT, cfg.downloads) // server, downloads, skyImages: read once, restart to change
 const SKY = path.resolve(ROOT, cfg.skyImages)
 let skyPhotos = scanSky(SKY)
+// the real receiver's latest reading during a live slot (receiver.ts), and the pass's samples so
+// far (a display that connects gets them all); its decoder has the satellite
+let lastReading: LiveReading | null = null
+let liveSamples: LiveSample[] = []
+let receiverPasses: Pass[] = [] // its upcoming passes, before the real passes' settings filter them
+// the live passes past LOS (the passes board): by pass id, with their AOS / LOS (ms) and when the
+// Pi had it done (its images then come over)
+const afterLos = new Map<number, { aos: number; los: number; after: AfterLos; doneAt?: number }>()
+const afterLosMessage = (): ServerMessage => ({
+  type: 'afterlos',
+  passes: Object.fromEntries([...afterLos].map(([id, e]) => [id, e.after])),
+})
+const locked = (r: LiveReading) => !!r.deframer_lock
 const CESIUM = path.join(ROOT, 'node_modules/cesium/Build/Cesium')
 const DIST = path.join(ROOT, 'dist')
 
@@ -50,6 +66,7 @@ const state = (): ServerMessage => ({
   config: settingsOf(cfg),
   library: libraryInfo(conductor.passes),
   sky: skyPhotos,
+  real: conductor.livePasses.slice(0, 4),
 })
 
 const listDisplays = () => broadcast({ type: 'displays', displays: [...displays.values()] })
@@ -100,6 +117,10 @@ function updateSettings(patch: Record<string, unknown>) {
   if (!Object.keys(changes).length) return
   cfg = { ...cfg, ...changes }
   conductor.setConfig(cfg)
+  if (changes.receiver) {
+    receiver.check()
+    applyLive()
+  }
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     try {
@@ -126,6 +147,8 @@ fs.watch(ROOT, (_event, file) => {
     lastWritten = text
     cfg = loadConfig()
     conductor.setConfig(cfg)
+    receiver.check()
+    applyLive()
     console.log('[settings] installation.json reloaded')
   }, 300)
 })
@@ -134,6 +157,8 @@ conductor.onChange = () => broadcast(state())
 
 wss.on('connection', (ws, req) => {
   send(ws, state())
+  if (lastReading || liveSamples.length) send(ws, { type: 'live', reading: lastReading, samples: liveSamples, reset: true })
+  if (afterLos.size) send(ws, afterLosMessage())
   ws.on('message', (data) => {
     let msg: ClientMessage
     try {
@@ -329,6 +354,15 @@ function telemetry() {
     ghosts_on: cfg.ghostsOn,
     ghosts: cfg.ghosts,
     cenit: cfg.cenit,
+    live: !!on?.pass.live,
+    receiver: cfg.receiver,
+    receiver_ok: receiver.status().ok,
+    receiver_error: receiver.status().error,
+    next_live: nextLive(),
+    last_import: importer.status().last,
+    import_error: importer.status().error,
+    live_snr: on?.pass.live ? (lastReading?.snr ?? null) : null,
+    live_lock: on?.pass.live ? (lastReading ? locked(lastReading) : null) : null,
     hide_cursor: cfg.hideCursor,
     imagery: cfg.imagery,
     location: cfg.location,
@@ -364,6 +398,136 @@ function onCommand(capability: string, p: Record<string, unknown>) {
       return testCenit()
   }
 }
+
+// --- the real receiver (receiver.ts): its passes go live on the timeline; its readings, the
+// pass's samples and the spectrum go to every display. No ghosts on a live pass: the real one
+// breaks up on its own.
+
+function liveSlotNow(margin = 0) {
+  const t = Date.now()
+  return conductor.slots.find((s) => s.pass.live && t >= s.approachAt - margin && t < s.end) ?? null
+}
+
+function onReading(reading: LiveReading | null, samples: LiveSample[], reset: boolean) {
+  lastReading = reading
+  if (reset) liveSamples = []
+  liveSamples.push(...samples)
+  if (liveSamples.length > 3600) liveSamples = liveSamples.slice(-3600)
+  if (reading || samples.length || reset) broadcast({ type: 'live', reading, samples, reset })
+}
+
+function liveReceiving() {
+  const s = liveSlotNow()
+  const t = Date.now()
+  return !!s && t >= s.aos && t < s.los
+}
+
+// the receiver's passes that go live: switched on, and high enough (silent: it stopped answering,
+// and the live pass on air goes too)
+function applyLive(silent = false) {
+  const r = cfg.receiver
+  conductor.setLive(r.enabled ? receiverPasses.filter((p) => (p.max_altitude ?? 90) >= r.minElevation) : [], silent)
+}
+
+// the next live pass, for the operator pages
+function nextLive() {
+  const t = Date.now()
+  const s = conductor.slots.find((x) => x.pass.live && x.los > t)
+  return s
+    ? { satellite: s.pass.satellite, aos_in: Math.round((s.aos - t) / 1000), los_in: Math.round((s.los - t) / 1000), max_el: s.pass.max_altitude }
+    : null
+}
+
+// A finished real pass into the library and, if the settings say so, on the passes board: the live
+// pass just processed plays right after the one on air; others (from before the server started)
+// join the end of the list.
+const importer = startImporter({
+  downloads: DOWNLOADS,
+  config: () => cfg,
+  onImported: (id) => {
+    rescan()
+    const e = [...afterLos.values()].find((x) => Math.abs(id - x.aos / 1000) <= SAME_PASS_S)
+    if (e) e.after = { state: 'received', pass: cfg.receiver.playImported ? id : null }
+    if (cfg.receiver.playImported) {
+      if (e) conductor.queue(id)
+      else conductor.append(id)
+    }
+    updateAfterLos()
+  },
+})
+
+// --- a live pass after LOS: the Pi decodes it (some minutes), and its row on the passes board,
+// under the one on air, says how far it is; done, its images come over (imported straight away)
+// and it plays next. Without an image it says so till the pass on air ends. Kept 3 hours; the Pi
+// decodes one pass at a time.
+const AFTER_LOS_KEEP = 3 * 3600_000
+const IMPORT_WAIT = 5 * 60_000 // its images not over by then (the Pi or the network failing): received
+const SAME_PASS_S = 15 * 60 // the Pi's pass starting this close to a live pass's AOS is that pass
+let piWork: PiWork | null = null
+let piFinished: { time: number; images: number }[] = []
+let afterLosSent = ''
+
+function updateAfterLos() {
+  const now = Date.now()
+  for (const s of [...conductor.history, ...conductor.slots]) {
+    if (s.pass.live && s.los <= now && now - s.los < AFTER_LOS_KEEP && !afterLos.has(s.pass.id))
+      afterLos.set(s.pass.id, { aos: s.aos, los: s.los, after: { state: 'processing', step: null, percent: null } })
+  }
+  // the newest one not done yet is the one the Pi is working on
+  let newest: { los: number; after: AfterLos } | null = null
+  for (const e of afterLos.values()) if (e.after.state === 'processing' && (!newest || e.los > newest.los)) newest = e
+  for (const [id, e] of afterLos) {
+    if (now - e.los > AFTER_LOS_KEEP) {
+      afterLos.delete(id)
+      continue
+    }
+    if (e.after.state !== 'processing') continue
+    if (e.doneAt) {
+      // done on the Pi, its images coming over (onImported says when)
+      if (now - e.doneAt > IMPORT_WAIT) e.after = { state: 'received', pass: null }
+      continue
+    }
+    const done = piFinished.find((p) => Math.abs(p.time - e.aos / 1000) <= SAME_PASS_S)
+    if (done && done.images > 0 && cfg.receiver.importPasses) {
+      e.doneAt = now
+      e.after = { state: 'processing', step: 'import', percent: null }
+      void importer.check() // into the library now, not at its next look
+    } else if (done) {
+      e.after = done.images > 0 ? { state: 'received', pass: null } : { state: 'empty', until: conductor.slots[0]?.end ?? now }
+    } else if (e === newest && piWork) {
+      e.after = { state: 'processing', step: piWork.step ?? null, percent: piWork.percent ?? null }
+    }
+  }
+  const msg = afterLosMessage()
+  const text = JSON.stringify(msg)
+  if (text !== afterLosSent) {
+    afterLosSent = text
+    broadcast(msg)
+  }
+}
+
+const receiver = startReceiver({
+    settings: () => cfg.receiver,
+    onPasses: (passes, silent) => {
+      receiverPasses = passes
+      applyLive(silent)
+    },
+    wanted: () => !!liveSlotNow(60_000),
+    receiving: liveReceiving,
+    onReading,
+    onSpectrum: (t, bins, frequency, samplerate) =>
+      broadcast({ type: 'spectrum', t, bins: Buffer.from(bins).toString('base64'), frequency, samplerate }),
+    processingWanted: () => [...afterLos.values()].some((e) => e.after.state === 'processing' && !e.doneAt),
+    onProcessing: (work) => {
+      piWork = work
+      updateAfterLos()
+    },
+    onFinished: (passes) => {
+      piFinished = passes
+      updateAfterLos()
+    },
+})
+setInterval(updateAfterLos, 1000)
 
 if (cfg.mqtt.enabled) {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))

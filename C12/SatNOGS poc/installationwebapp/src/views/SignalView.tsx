@@ -8,10 +8,11 @@ import { usePathWords } from '../art/usePathWords.ts'
 import { useCanvasLoop } from '../canvas.ts'
 import { COLORS, FONT } from '../colors.ts'
 import { Display } from '../components/Display.tsx'
-import { fmt, num, useStrings } from '../i18n.ts'
+import { fmt, num, strings, useStrings } from '../i18n.ts'
 import { link, liveSlot, useLink, useTicker } from '../link.ts'
 import type { Slot } from '../shared/protocol.ts'
 import { loadSpectrogram, type Spectrogram } from '../spectrogram.ts'
+import { SignalChart, hasRealSignal, passSamples } from './LiveCharts.tsx'
 import { activeSlot, geometryFor, phaseAt, satTimeAt } from '../timeline.ts'
 
 const D2R = Math.PI / 180
@@ -53,7 +54,7 @@ function coverCanvas(image: ImageBitmap, w: number, h: number): HTMLCanvasElemen
   return canvas
 }
 
-const OPAQUE = LUT.map(([r, g, b]): [number, number, number, number] => [r, g, b, 255])
+export const OPAQUE = LUT.map(([r, g, b]): [number, number, number, number] => [r, g, b, 255])
 
 const noise = () => Math.floor(Math.random() ** 2 * 70)
 
@@ -66,9 +67,9 @@ function receivingElevation(s: Slot | null, t: number): number | null {
 }
 
 // when the satellite reaches a phrase word: server time, ms
-const reachedAt = (s: Slot, word: PathWord) => s.aos + word.at * (s.los - s.aos)
+export const reachedAt = (s: Slot, word: PathWord) => s.aos + word.at * (s.los - s.aos)
 
-interface Mark extends PathWord {
+export interface Mark extends PathWord {
   cols: number
   rows: number
   ink: Uint8Array // cols × rows, 0..255
@@ -76,8 +77,9 @@ interface Mark extends PathWord {
 
 // A phrase word as a grid of spectrogram cells (columns = frequency, rows = time). Drawn at its
 // on-screen proportions and then squeezed into the grid, so it reads right once the waterfall
-// is stretched to the screen: about a third of its height, up to 80% of its width.
-function wordMark(word: PathWord, screenW: number, screenH: number): Mark {
+// is stretched to the screen: about a third of its height, up to 80% of its width. (The live
+// waterfall, LiveCharts.tsx, has a grid of its own.)
+export function wordMark(word: PathWord, screenW: number, screenH: number, columns = COLUMNS, visibleRows = VISIBLE_ROWS): Mark {
   const text = word.text.toUpperCase()
   const boxH = screenH * 0.32
   const probe = document.createElement('canvas').getContext('2d')!
@@ -102,8 +104,8 @@ function wordMark(word: PathWord, screenW: number, screenH: number): Mark {
   glitched.height = big.height
   glitch(glitched.getContext('2d')!, big, 0, big.height, fontPx, random(textSeed(text)))
 
-  const cols = Math.max(1, Math.round((boxW / screenW) * COLUMNS))
-  const rows = Math.max(1, Math.round((boxH / screenH) * VISIBLE_ROWS))
+  const cols = Math.max(1, Math.round((boxW / screenW) * columns))
+  const rows = Math.max(1, Math.round((boxH / screenH) * visibleRows))
   const grid = document.createElement('canvas')
   grid.width = cols
   grid.height = rows
@@ -424,7 +426,19 @@ export function SignalView() {
   const pathWords = usePathWords(slot)
   const words = fontReady ? pathWords : null
   const el = receivingElevation(slot, now)
-  const level = el != null && el > 0 ? Math.sin(el * D2R) : 0
+  // a real pass (the receiver's, live or imported and replayed): its SNR; a made-up one: as the
+  // satellite climbs
+  const live = !!slot && hasRealSignal(slot)
+  const latest = slot && live && !slot.pass.live ? (passSamples(slot).at(-1) ?? null) : null
+  const reading = slot?.pass.live
+    ? l.live && now - l.live.t < 10_000
+      ? { snr: l.live.snr, lock: !!l.live.deframer_lock }
+      : null
+    : latest
+      ? { snr: latest.snr, lock: !!latest.lock }
+      : null
+  const snr = reading?.snr ?? null
+  const level = live ? (snr != null ? Math.min(1, Math.max(0, snr / 12)) : 0) : el != null && el > 0 ? Math.sin(el * D2R) : 0
   // the pass's sky photo: behind the waterfall's noise (NOAA), the dots' colours (METEOR)
   const skyFile = slot ? skyFor(slot.id, l.state?.sky, l.state?.config.sky) : null
   const apt = !!slot?.pass.audio
@@ -433,7 +447,11 @@ export function SignalView() {
   return (
     <Display title="signal">
       <div className="signal">
-        {slot?.pass.audio ? (
+        {live ? (
+          <div className="live-chart">
+            <SignalChart slotId={slot?.id ?? null} />
+          </div>
+        ) : slot?.pass.audio ? (
           <Waterfall key={slot.id} slotId={slot.id} url={slot.pass.audio} words={words} sky={sky} />
         ) : (
           <Constellation slotId={slot?.id ?? null} words={words} sky={sky} />
@@ -443,7 +461,15 @@ export function SignalView() {
           <div className="meter-bar">
             <div style={{ width: `${level * 100}%` }} />
           </div>
-          <span>{el != null && el > 0 ? fmt(text.elevation, { el: num(el, 1) }) : text.noSignal}</span>
+          <span>
+            {live
+              ? snr != null
+                ? `SNR ${num(snr, 1)} dB${reading?.lock ? '' : ' · ' + strings().live.noLock}`
+                : text.noSignal
+              : el != null && el > 0
+                ? fmt(text.elevation, { el: num(el, 1) })
+                : text.noSignal}
+          </span>
         </div>
       </div>
     </Display>

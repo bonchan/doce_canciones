@@ -26,5 +26,6 @@
   "approachSeconds": 8,
   "departSeconds": 0,
   "upcoming": 8,
+  "receiver": { "enabled": false, "url": "http://rpi4b.local:8000", "minElevation": 0, "joinDelay": 0, "importPasses": true, "playImported": true },
   "mqtt": { "enabled": true, "broker": "mqtt://nuc.local:1883", "username": "", "password": "", "zone": "satnogs", "name": "satnogs-installation" }
 }

@@ -3,6 +3,8 @@ import { LANGUAGES } from '../i18n.ts'
 import { DEFAULT_IMAGE, imageGroup } from '../images.ts'
 import { link, useLink } from '../link.ts'
 import { CENIT_DEFAULTS, CENIT_RANGES, type CenitSettings } from '../shared/cenit.ts'
+import { RECEIVER_DEFAULTS, RECEIVER_RANGES, type ReceiverSettings } from '../shared/receiver.ts'
+import { countdown } from '../timeline.ts'
 import {
   GHOST_APPEAR,
   GHOST_DEFAULTS,
@@ -202,6 +204,107 @@ function CenitFields({ c }: { c: CenitSettings }) {
   )
 }
 
+// a text that applies on Enter or when leaving the field
+function TextField(props: { value: string; width?: string; onCommit: (v: string) => void }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  return (
+    <input
+      type="text"
+      style={{ width: props.width }}
+      value={draft ?? props.value}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={(e) => {
+        const v = e.target.value.trim()
+        if (v && v !== props.value) props.onCommit(v)
+        setDraft(null)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+      }}
+    />
+  )
+}
+
+// The real passes (server/receiver.ts): the real receiver's passes, live on every screen. On or
+// off, its address, the lowest pass that goes live, and a moment after AOS before switching.
+function ReceiverFields({ r }: { r: ReceiverSettings }) {
+  const l = useLink()
+  const change = (patch: Partial<ReceiverSettings>) => set({ receiver: { ...r, ...patch } })
+  const now = link.now()
+  const next = l.state?.slots.find((x) => x.pass.live && x.los > now)
+  return (
+    <>
+      <div className="field">
+        <span>real passes: the receiver's, live on every screen</span>
+        <label className="check">
+          <input type="checkbox" checked={r.enabled} onChange={(e) => change({ enabled: e.target.checked })} />
+          {r.enabled ? 'on' : 'off'}
+        </label>
+        {r.enabled && (
+          <span className="dim">
+            {next
+              ? now >= next.aos
+                ? `live now: ${next.pass.satellite}`
+                : `next: ${next.pass.satellite} in ${countdown(next.aos - now)}, up to ${next.pass.max_altitude ?? '?'}°`
+              : 'no real pass ahead (yet)'}
+          </span>
+        )}
+      </div>
+      <div className="field">
+        <table className={r.enabled ? 'ghost-settings' : 'ghost-settings all-off'}>
+          <tbody>
+            <tr>
+              <td>receiver (raspberry_sat)</td>
+              <td>
+                <TextField value={r.url} width="18em" onCommit={(url) => change({ url })} />
+              </td>
+            </tr>
+            <tr>
+              <td>only passes higher than</td>
+              <td>
+                <NumberField
+                  value={r.minElevation}
+                  min={RECEIVER_RANGES.minElevation[0]}
+                  max={RECEIVER_RANGES.minElevation[1]}
+                  step={1}
+                  onCommit={(minElevation) => change({ minElevation })}
+                />
+                <span className="dim"> °</span>
+              </td>
+            </tr>
+            <tr>
+              <td>finished passes</td>
+              <td>
+                <label className="check">
+                  <input type="checkbox" checked={r.importPasses} onChange={(e) => change({ importPasses: e.target.checked })} />
+                  into the library
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={r.playImported} onChange={(e) => change({ playImported: e.target.checked })} />
+                  and play it right after
+                </label>
+              </td>
+            </tr>
+            <tr>
+              <td>switch to it after AOS</td>
+              <td>
+                <NumberField
+                  value={r.joinDelay}
+                  min={RECEIVER_RANGES.joinDelay[0]}
+                  max={RECEIVER_RANGES.joinDelay[1]}
+                  step={1}
+                  onCommit={(joinDelay) => change({ joinDelay })}
+                />
+                <span className="dim"> s</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
 // image kinds seen per satellite family, most common first
 function kindsByFamily(passes: PassSummary[]): [string, [string, number][]][] {
   const families = new Map<string, Map<string, number>>()
@@ -274,6 +377,7 @@ export function SettingsPanel() {
       </label>
       <GhostsFields on={s.ghostsOn !== false} ghosts={s.ghosts ?? GHOST_DEFAULTS} />
       <CenitFields c={{ ...CENIT_DEFAULTS, ...s.cenit }} />
+      <ReceiverFields r={{ ...RECEIVER_DEFAULTS, ...s.receiver }} />
       <label className="field">
         <span>location</span>
         <select value={s.location} onChange={(e) => set({ location: e.target.value as Settings['location'] })}>
